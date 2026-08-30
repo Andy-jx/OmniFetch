@@ -19,6 +19,7 @@
     <section class="primary-actions">
       <button id="downloadPage" class="btn primary">下载当前视频</button>
       <button id="refresh" class="btn">重新检测</button>
+      <button id="recordMode" class="btn warning">录制兜底</button>
     </section>
 
     <section class="status-row">
@@ -34,7 +35,7 @@
     <section id="mediaList" class="media-list"></section>
 
     <footer>
-      MP4 / WebM 直接保存；HLS / M3U8 / DASH 会打开清晰度页，可选择分辨率并用 8 路分片并发下载后自动合并。广告、小分片和明显跟踪资源会优先过滤。
+      MP4 / WebM 直接保存；HLS / M3U8 / DASH 可选清晰度并自动合并。抓不到真实媒体地址时，可用“录制兜底”实时录制当前标签页的画面和声音。
     </footer>
   </main>
   <script src="popup.js"></script>

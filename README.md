@@ -1,19 +1,22 @@
 # OmniFetch
 
-全平台媒体下载助手。目标是做成类似 FetchV 的“浏览器媒体嗅探器”体验：打开网页、播放视频、浏览器自动捕获真实媒体请求，工具栏图标直接显示捕获数量，点开即可保存。
+全平台媒体下载助手。目标是做成类似 FetchV 的“浏览器媒体嗅探器”体验：打开网页、播放视频、浏览器自动捕获真实媒体请求，工具栏图标显示捕获数量，点开即可保存。
 
-## 当前版本：v0.3.0
+## 当前版本：v0.4.0
 
-v0.3.0 已把产品逻辑从“平台解析优先”调整为 **媒体嗅探优先**：
+v0.4.0 已经完成一套更接近 FetchV 的主流程：
 
-1. 浏览器后台持续监听当前标签页真实媒体请求。
-2. 捕获到可用资源后，OmniFetch 图标右上角显示数字角标。
-3. 点击扩展后直接列出捕获到的 MP4 / WebM / HLS/M3U8 / DASH / FLV / 音频等资源。
-4. MP4 / WebM / MOV / FLV / MP3 等静态资源直接交给浏览器保存，不要求本地助手。
-5. HLS/M3U8、DASH 等需要分片合并的资源交给本地助手 + FFmpeg。
-6. 如果页面没有捕获到直链，最后才使用页面 URL + yt-dlp 作为兜底解析。
+1. **媒体嗅探优先**：后台持续监听页面真实媒体请求。
+2. **图标数字角标**：捕获到资源后，OmniFetch 图标直接显示数量。
+3. **自动过滤噪声**：过滤明显广告、跟踪资源和 TS/M4S 小分片，优先把真正视频排在前面。
+4. **静态视频直存**：MP4 / WebM / MOV / FLV / MP3 等直接交给浏览器保存，不需要本地助手。
+5. **HLS / DASH 清晰度页**：M3U8/HLS、DASH/MPD 会打开独立下载页，读取可用分辨率、码率、FPS、格式和音视频轨。
+6. **最高画质推荐**：清晰度页默认把最高分辨率排在第一位，也可以手动选 1080P / 720P / 480P 等可用格式。
+7. **8 路并发分片下载**：HLS / DASH 使用 yt-dlp 并发下载分片，然后调用 FFmpeg 自动合并。
+8. **自动补音频**：选到视频-only 格式时，会自动尝试匹配最佳音频轨并合并。
+9. **页面解析兜底**：如果没有嗅探到媒体直链，最后才使用当前页面 URL + yt-dlp 尝试解析。
 
-默认下载目录（本地助手任务）：
+默认下载目录：
 
 ```text
 %USERPROFILE%\Downloads\OmniFetch
@@ -21,33 +24,35 @@ v0.3.0 已把产品逻辑从“平台解析优先”调整为 **媒体嗅探优�
 
 > 本项目只用于保存你有权下载、平台允许下载或公开可访问的媒体内容。不提供 DRM 绕过、付费墙绕过或访问控制规避功能。
 
-## 为什么这样更接近 FetchV
-
-核心不是给每个平台单独写一个下载接口，而是统一监听浏览器真正播放的媒体。
+## 使用逻辑
 
 ```text
-网页播放视频
+打开视频网站
   ↓
-浏览器网络请求
+播放视频 2–5 秒
   ↓
-OmniFetch 自动捕获
+OmniFetch 自动监听真实媒体请求
   ↓
-工具栏数字角标
+工具栏图标出现 1 / 2 / 3...
   ↓
-点击扩展查看资源
-  ├─ MP4 / WebM / FLV / 音频 → 浏览器直接保存
-  └─ M3U8/HLS / DASH → 本地助手 + FFmpeg 合并
-  ↓
-没有捕获到直链时
-  ↓
-页面解析兜底
+点击扩展
+  ├─ MP4 / WebM / FLV / 音频 → 直接保存
+  └─ HLS / M3U8 / DASH → 清晰度页
+                              ↓
+                       选 1080P / 720P...
+                              ↓
+                       8 路并发下载分片
+                              ↓
+                       FFmpeg 自动合并
+                              ↓
+                         本地视频文件
 ```
 
-这种方式对 X、TikTok、抖音、B站、Instagram、Facebook、小红书、快手以及普通视频网页使用的是同一套通用逻辑，不依赖“这个网站叫什么”。只要浏览器能访问到标准媒体资源，并且不是 DRM 保护流，就有机会捕获。
+这套逻辑不依赖“网站叫什么”，因此可以用于 X、YouTube、TikTok、抖音、B站、Instagram、Facebook、小红书、快手、Vimeo、Twitch、Reddit，以及大量普通网页。实际成功率取决于站点是否使用可访问的标准媒体资源，以及是否存在 DRM、短时签名、登录限制等情况。
 
 ## Windows 便携包
 
-GitHub Actions 会自动构建：
+GitHub Actions 自动构建：
 
 ```text
 Actions → Build Windows Package → Artifacts → OmniFetch-Windows
@@ -63,11 +68,9 @@ extension\
 README.md
 ```
 
-不需要安装 Python，也不需要另装 FFmpeg。
+不需要安装 Python，也不需要另外安装 FFmpeg。
 
-## 使用
-
-### 1. 安装扩展
+## 安装
 
 Chrome：
 
@@ -83,42 +86,58 @@ edge://extensions/
 
 开启开发者模式 → 加载已解压扩展 → 选择 `extension` 文件夹 → 固定 OmniFetch 到工具栏。
 
-### 2. 日常下载
-
-1. 打开包含视频的网页。
-2. 播放视频几秒。
-3. 捕获成功后，OmniFetch 图标右上角出现数字。
-4. 点击 OmniFetch。
-5. 排在列表最上面的资源通常最值得下载。
-6. 静态媒体直接点“保存”。
-7. HLS/M3U8/DASH 点“下载并合并”。
-
-只有 HLS/DASH 或页面解析兜底需要启动：
+普通 MP4 / WebM 可以直接保存；遇到 HLS/M3U8/DASH 或页面解析兜底时，先双击：
 
 ```text
 run-helper.bat
 ```
 
-普通 MP4 / WebM 等不需要助手。
+保持助手窗口运行。
+
+## v0.4.0 新增接口
+
+分析媒体清晰度：
+
+```text
+POST http://127.0.0.1:17891/probe
+Content-Type: application/json
+
+{
+  "media_url": "https://example.com/master.m3u8",
+  "page_url": "https://example.com/video",
+  "browser": "chrome"
+}
+```
+
+指定格式下载：
+
+```text
+POST http://127.0.0.1:17891/download
+Content-Type: application/json
+
+{
+  "media_url": "https://example.com/master.m3u8",
+  "page_url": "https://example.com/video",
+  "browser": "chrome",
+  "format_id": "hls-1080"
+}
+```
 
 ## 下一步重点
 
-为了继续接近 FetchV 的完整体验，后续优先做：
-
-- HLS master playlist 分辨率识别与最高画质自动选择
-- 多线程分片下载
-- 独立下载任务页：速度、进度、暂停、取消、改名
-- 多媒体预览，方便多视频页面判断目标
-- blob / MediaSource 无直链页面的“录制模式”
-- 域名过滤，减少广告和无关媒体资源
-- HLS 直播保存
+- blob / MediaSource 无直链页面的录制兜底模式
+- 下载任务暂停 / 取消 / 重试
+- 多视频页面缩略图和预览
+- 更好的重复媒体合并和广告过滤
+- 助手自动启动，进一步减少手动操作
+- HLS 直播按时间段保存
 
 ## 当前限制
 
 - DRM 加密视频不处理。
 - 付费墙、访问控制、未授权内容不绕过。
-- blob / MediaSource 的缓存录制模式尚未完成。
-- 部分站点媒体 URL 有极短有效期，需要播放后尽快下载。
+- blob / MediaSource 录制模式尚未完成。
+- 某些站点媒体 URL 有极短有效期，需要播放后尽快下载。
 - “全平台”是通用架构目标，不代表任何网站永久 100% 成功。
 
 ## 项目目录
@@ -131,7 +150,10 @@ OmniFetch/
 │  ├─ content.js
 │  ├─ popup.html
 │  ├─ popup.css
-│  └─ popup.js
+│  ├─ popup.js
+│  ├─ stream.html
+│  ├─ stream.css
+│  └─ stream.js
 ├─ helper/
 │  ├─ server.py
 │  └─ requirements.txt

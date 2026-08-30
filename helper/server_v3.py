@@ -52,6 +52,12 @@ def final_media_file(temp_dir: Path) -> Path | None:
     return max(pool, key=lambda path: path.stat().st_size if path.exists() else 0)
 
 
+def is_manifest_url(value: str) -> bool:
+    lower = (value or "").lower()
+    path = lower.split("?", 1)[0].split("#", 1)[0]
+    return path.endswith(".m3u8") or path.endswith(".mpd")
+
+
 def video_options(job_id: str, page_url: str, format_id: str = "") -> tuple[dict, Path]:
     temp_dir = core.DOWNLOAD_DIR / ".tmp" / job_id
     safe_rmtree(temp_dir)
@@ -100,24 +106,35 @@ def run_video_download(job_id: str, payload: dict) -> None:
         base_opts, temp_dir = video_options(job_id, page_url, format_id)
         attempts: list[tuple[str, str, bool]] = []
 
-        # Prefer the real page extractor. Captured media URLs are only fallbacks;
-        # many sites expose tiny fragments that are not standalone video files.
+        # FetchV-style behavior: a captured M3U8/MPD is the strongest source.
+        # It describes the full stream, while .m4s/.ts/small mp4 responses may be fragments.
+        if media_url and is_manifest_url(media_url):
+            attempts.append(("captured-manifest", media_url, False))
+            if browser_ok:
+                attempts.append(("captured-manifest-cookies", media_url, True))
+
         if page_url:
             if browser_ok:
                 attempts.append(("page-extractor-cookies", page_url, True))
             attempts.append(("page-extractor", page_url, False))
 
-        if media_url:
+        if media_url and not is_manifest_url(media_url):
             attempts.append(("captured-media", media_url, False))
             if browser_ok:
                 attempts.append(("captured-media-cookies", media_url, True))
 
         seen = {page_url, media_url, ""}
-        for index, url in enumerate(fallback_urls[:10], start=1):
+        manifest_fallbacks = [url for url in fallback_urls if is_manifest_url(url)]
+        other_fallbacks = [url for url in fallback_urls if not is_manifest_url(url)]
+        for index, url in enumerate(manifest_fallbacks + other_fallbacks, start=1):
             if url in seen:
                 continue
             seen.add(url)
-            attempts.append((f"captured-fallback-{index}", url, False))
+            label = "manifest-fallback" if is_manifest_url(url) else "captured-fallback"
+            attempts.append((f"{label}-{index}", url, False))
+
+        if not attempts:
+            raise ValueError("没有可用的下载策略")
 
         platform = core.detect_platform(page_url or media_url or fallback_urls[0])
         core.update_job(

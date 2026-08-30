@@ -25,12 +25,14 @@ jobs:
           pip install -r helper/requirements.txt
           pip install pyinstaller imageio-ffmpeg
 
-      - name: Validate extension files
+      - name: Validate source files
         shell: pwsh
         run: |
+          python -m py_compile helper/server.py
           node --check extension/background.js
           node --check extension/content.js
           node --check extension/popup.js
+          node --check extension/stream.js
           Get-Content extension/manifest.json -Raw | ConvertFrom-Json | Out-Null
 
       - name: Build helper EXE
@@ -57,7 +59,8 @@ jobs:
               Start-Sleep -Seconds 1
               try {
                 $health = Invoke-RestMethod -Uri "http://127.0.0.1:17891/health" -TimeoutSec 2
-                if ($health.ok -eq $true -and $health.ffmpeg -eq $true) {
+                $caps = Invoke-RestMethod -Uri "http://127.0.0.1:17891/capabilities" -TimeoutSec 2
+                if ($health.ok -eq $true -and $health.ffmpeg -eq $true -and $caps.quality_probe -eq $true -and $caps.concurrent_fragments -eq 8) {
                   $ok = $true
                   break
                 }
@@ -65,7 +68,7 @@ jobs:
               }
             }
             if (-not $ok) {
-              throw "OmniFetchHelper.exe health/FFmpeg check failed"
+              throw "OmniFetchHelper.exe health/capabilities/FFmpeg check failed"
             }
           } finally {
             if ($proc -and -not $proc.HasExited) {

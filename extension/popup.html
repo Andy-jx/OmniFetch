@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OmniFetch</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div>
+        <h1>OmniFetch</h1>
+        <p id="pageTitle" class="muted">正在读取当前页面…</p>
+      </div>
+      <span id="helperBadge" class="badge">助手检测中</span>
+    </header>
+
+    <section class="primary-actions">
+      <button id="downloadPage" class="btn primary">下载当前页面视频</button>
+      <button id="refresh" class="btn">重新检测</button>
+    </section>
+
+    <section class="status-row">
+      <span id="statusText">播放视频几秒后，识别率更高。</span>
+      <button id="clear" class="link-btn">清空</button>
+    </section>
+
+    <section id="mediaList" class="media-list"></section>
+
+    <footer>
+      <span>仅处理你有权保存或平台允许下载的内容。</span>
+    </footer>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

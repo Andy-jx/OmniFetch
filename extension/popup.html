@@ -13,29 +13,40 @@
         <h1>OmniFetch</h1>
         <p id="pageTitle" class="muted">正在读取当前页面…</p>
       </div>
-      <span id="helperBadge" class="badge">流媒体助手检测中</span>
+      <span id="helperBadge" class="badge">助手检测中</span>
     </header>
 
-    <section class="primary-actions">
-      <button id="downloadPage" class="btn primary">下载当前视频</button>
+    <section class="download-panel">
+      <article class="download-card featured">
+        <div>
+          <div class="card-title">最高画质视频</div>
+          <div id="videoHint" class="card-meta">自动选择当前页面最高可用画质并保留声音</div>
+        </div>
+        <button id="downloadVideo" class="action-btn primary">下载视频</button>
+      </article>
+
+      <article class="download-card">
+        <div>
+          <div class="card-title">单独音频</div>
+          <div id="audioHint" class="card-meta">自动选择已识别到的最佳音频轨</div>
+        </div>
+        <button id="downloadAudio" class="action-btn">下载音频</button>
+      </article>
+    </section>
+
+    <section class="tools-row">
       <button id="refresh" class="btn">重新检测</button>
       <button id="recordMode" class="btn warning">录制兜底</button>
+      <button id="clear" class="btn">清空识别</button>
     </section>
 
-    <section class="status-row">
-      <span id="statusText">播放视频后，图标角标会显示捕获数量。</span>
-      <button id="clear" class="link-btn">清空</button>
+    <section class="status-box">
+      <div id="statusText">播放视频 2–5 秒后再下载，识别更稳定。</div>
+      <div id="captureSummary" class="capture-summary">等待媒体请求…</div>
     </section>
-
-    <section class="list-title">
-      <strong>已捕获资源</strong>
-      <span id="captureCount">0</span>
-    </section>
-
-    <section id="mediaList" class="media-list"></section>
 
     <footer>
-      MP4 / WebM 直接保存；HLS / M3U8 / DASH 可选清晰度并自动合并。抓不到真实媒体地址时，可用“录制兜底”实时录制当前标签页的画面和声音。
+      已默认隐藏 M4S / TS 分片、低价值重复资源和明显广告请求。主界面只保留“最高画质视频”和“单独音频”。抓不到真实媒体时可使用录制兜底。
     </footer>
   </main>
   <script src="popup.js"></script>

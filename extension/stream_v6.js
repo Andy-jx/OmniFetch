@@ -1,5 +1,5 @@
 const HELPER_BASE = "http://127.0.0.1:17891";
-const REQUIRED_HELPER = [0, 5, 6];
+const REQUIRED_HELPER = [0, 5, 7];
 
 const params = new URLSearchParams(location.search);
 let mediaUrl = params.get("url") || "";
@@ -35,6 +35,8 @@ let probeData = null;
 let bestVideoFormat = null;
 let bestAudioFormat = null;
 let requestContext = {};
+let playbackWidth = 0;
+let playbackHeight = 0;
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function parseVersion(value) { return String(value || "").split(".").slice(0, 3).map((p) => Number.parseInt(p, 10) || 0); }
@@ -67,10 +69,18 @@ function streamMasterBonus(item) {
   if (url.includes("master")) return 500;
   return 0;
 }
+function qualityP(width, height, explicit = 0) {
+  const q = Number(explicit || 0);
+  if (q) return q;
+  const w = Number(width || 0), h = Number(height || 0);
+  if (w && h) return Math.min(w, h);
+  return h || w || 0;
+}
 function qualityLabel(item) {
   if (!item) return "待解析";
-  if (item.width && item.height) return `${item.height}P · ${item.width}×${item.height}`;
-  if (item.height) return `${item.height}P`;
+  const q = qualityP(item.width, item.height, item.quality_p);
+  if (item.width && item.height) return `${q || item.height}P · ${item.width}×${item.height}`;
+  if (q) return `${q}P`;
   return "最高可用";
 }
 function showEmpty(message) {
@@ -96,14 +106,29 @@ function pickBestFormats(formats) {
   const list = Array.isArray(formats) ? formats : [];
   const videos = list.filter((item) => item?.has_video);
   const audios = list.filter((item) => item?.has_audio && !item?.has_video);
-  bestVideoFormat = [...videos].sort((a, b) => Number(b.height || 0) - Number(a.height || 0) || Number(b.tbr || 0) - Number(a.tbr || 0) || Number(b.filesize || 0) - Number(a.filesize || 0))[0] || null;
+  bestVideoFormat = [...videos].sort((a, b) => qualityP(b.width, b.height, b.quality_p) - qualityP(a.width, a.height, a.quality_p) || Number(b.tbr || 0) - Number(a.tbr || 0) || Number(b.filesize || 0) - Number(a.filesize || 0))[0] || null;
   bestAudioFormat = [...audios].sort((a, b) => Number(b.tbr || 0) - Number(a.tbr || 0) || Number(b.filesize || 0) - Number(a.filesize || 0))[0] || null;
+
+  if ((!bestVideoFormat || !bestVideoFormat.width || !bestVideoFormat.height) && playbackWidth && playbackHeight) {
+    bestVideoFormat = {
+      ...(bestVideoFormat || {}),
+      format_id: bestVideoFormat?.format_id || "",
+      ext: bestVideoFormat?.ext || "mp4",
+      protocol: bestVideoFormat?.protocol || "m3u8",
+      width: playbackWidth,
+      height: playbackHeight,
+      quality_p: qualityP(playbackWidth, playbackHeight),
+      has_video: true,
+      has_audio: Boolean(bestVideoFormat?.has_audio),
+      format_note: bestVideoFormat?.format_note || "浏览器播放器实际分辨率"
+    };
+  }
   qualityStatusEl.textContent = qualityLabel(bestVideoFormat);
 }
 function createChoiceCard(kind, item) {
   const card = document.createElement("article"); card.className = "format-card";
   const quality = document.createElement("div"); quality.className = "quality";
-  quality.textContent = kind === "video" ? `最高画质视频${item?.height ? ` · ${item.height}P` : ""}` : "最佳音频";
+  quality.textContent = kind === "video" ? `最高画质视频${qualityP(item?.width, item?.height, item?.quality_p) ? ` · ${qualityP(item?.width, item?.height, item?.quality_p)}P` : ""}` : "最佳音频";
   const meta = document.createElement("div"); meta.className = "format-meta";
   meta.textContent = item ? formatDescription(item, kind) : kind === "video" ? "未拿到独立清晰度信息，将自动选择最高画质" : "未拿到独立音轨信息，将尝试提取最佳音频";
   const btn = document.createElement("button"); btn.className = "format-download"; btn.textContent = kind === "video" ? "下载视频" : "下载音频";
@@ -126,11 +151,15 @@ async function resolvePreferredCapturedStream() {
   if (!Number.isInteger(sourceTabId)) return mediaUrl;
   try {
     const response = await chrome.runtime.sendMessage({ type: "OMNIFETCH_GET_MEDIA", tabId: sourceTabId });
+    playbackWidth = Number(response?.playbackWidth || 0);
+    playbackHeight = Number(response?.playbackHeight || 0);
     const expected = streamKind === "DASH" ? "dash" : "hls";
     const candidates = (response?.items || []).filter((item) => item?.type === expected && item?.url);
     if (!candidates.length) return mediaUrl;
     candidates.sort((a, b) => (streamMasterBonus(b) + Number(b.score || 0)) - (streamMasterBonus(a) + Number(a.score || 0)));
     mediaUrl = candidates[0].url;
+    playbackWidth = Number(candidates[0].playbackWidth || playbackWidth || 0);
+    playbackHeight = Number(candidates[0].playbackHeight || playbackHeight || 0);
     sourceEl.textContent = mediaUrl; sourceEl.title = mediaUrl;
   } catch (_) {}
   return mediaUrl;
@@ -160,26 +189,26 @@ async function probe() {
   showEmpty("正在定位主播放清单并解析最高画质…");
   await resolvePreferredCapturedStream();
   if (!mediaUrl) { probeStatusEl.textContent = "缺少地址"; qualityStatusEl.textContent = "未知"; showEmpty("没有收到播放清单地址，请回到视频页面重新捕获。"); retryBtn.disabled = false; return; }
-  if (!(await checkHelper())) { probeStatusEl.textContent = helperOnline ? "助手版本过旧" : "助手未启动"; qualityStatusEl.textContent = "不可用"; showEmpty(helperOnline ? `当前助手 v${helperVersion}，请升级到 v0.5.6。` : "请先启动 v0.5.6 本地助手。"); retryBtn.disabled = false; return; }
+  if (!(await checkHelper())) { probeStatusEl.textContent = helperOnline ? "助手版本过旧" : "助手未启动"; qualityStatusEl.textContent = "不可用"; showEmpty(helperOnline ? `当前助手 v${helperVersion}，请升级到 v0.5.7。` : "请先启动 v0.5.7 本地助手。"); retryBtn.disabled = false; return; }
   await loadRequestContext();
   try {
-    const res = await fetch(`${HELPER_BASE}/probe`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ media_url: mediaUrl, page_url: pageUrl, title: titleHint, browser: browserName, request_headers: requestContext }) });
+    const res = await fetch(`${HELPER_BASE}/probe`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ media_url: mediaUrl, page_url: pageUrl, title: titleHint, browser: browserName, request_headers: requestContext, playback_width: playbackWidth, playback_height: playbackHeight }) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) throw new Error(data.error || `分析失败 (${res.status})`);
     probeData = data; titleEl.textContent = data.title || titleHint || "流媒体"; platformEl.textContent = data.platform || "通用网页";
     probeStatusEl.textContent = data.is_live ? "直播流" : "分析完成"; renderFormats(data.formats || []);
-  } catch (error) { probeStatusEl.textContent = "分析失败"; qualityStatusEl.textContent = "未知"; showEmpty(error.message || error); bestBtn.disabled = false; audioBtn.disabled = false; }
+  } catch (error) { probeStatusEl.textContent = "分析失败"; qualityStatusEl.textContent = playbackWidth && playbackHeight ? `${qualityP(playbackWidth, playbackHeight)}P · ${playbackWidth}×${playbackHeight}` : "未知"; showEmpty(error.message || error); bestBtn.disabled = false; audioBtn.disabled = false; }
   finally { retryBtn.disabled = false; }
 }
 
 async function startDownload(kind = "video", formatId = "") {
-  if (!(await checkHelper())) { setProgress(0, "无法开始下载", helperOnline ? `请升级助手到 v0.5.6，当前 v${helperVersion}` : "请先启动 v0.5.6 本地助手。"); return; }
+  if (!(await checkHelper())) { setProgress(0, "无法开始下载", helperOnline ? `请升级助手到 v0.5.7，当前 v${helperVersion}` : "请先启动 v0.5.7 本地助手。"); return; }
   await resolvePreferredCapturedStream();
   if (!Object.keys(requestContext).length) await loadRequestContext();
   const initialQuality = kind === "video" ? qualityLabel(bestVideoFormat) : "最佳音频";
   setProgress(0, kind === "audio" ? "正在创建音频任务" : `正在创建视频任务 · ${initialQuality}`, formatId ? `格式：${formatId}` : kind === "audio" ? "自动选择最佳音频" : `当前目标画质：${initialQuality}`);
   try {
-    const payload = { media_url: mediaUrl, page_url: pageUrl, title: probeData?.title || titleHint, browser: browserName, download_kind: kind, request_headers: requestContext };
+    const payload = { media_url: mediaUrl, page_url: pageUrl, title: probeData?.title || titleHint, browser: browserName, download_kind: kind, request_headers: requestContext, playback_width: playbackWidth, playback_height: playbackHeight };
     if (kind === "video" && formatId) payload.format_id = formatId;
     const res = await fetch(`${HELPER_BASE}/download`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     const data = await res.json().catch(() => ({}));
@@ -194,9 +223,10 @@ async function pollJob(jobId, kind) {
     try {
       const res = await fetch(`${HELPER_BASE}/jobs/${jobId}`); const data = await res.json().catch(() => ({}));
       const job = data?.job; if (!res.ok || !data.ok || !job) continue;
-      const selectedHeight = Number(job.selected_height || bestVideoFormat?.height || 0);
-      const selectedWidth = Number(job.selected_width || bestVideoFormat?.width || 0);
-      const selectedQuality = kind === "video" ? (selectedHeight ? `${selectedHeight}P${selectedWidth ? ` · ${selectedWidth}×${selectedHeight}` : ""}` : "最高可用") : "最佳音频";
+      const selectedHeight = Number(job.selected_height || bestVideoFormat?.height || playbackHeight || 0);
+      const selectedWidth = Number(job.selected_width || bestVideoFormat?.width || playbackWidth || 0);
+      const selectedP = Number(job.selected_quality_p || qualityP(selectedWidth, selectedHeight));
+      const selectedQuality = kind === "video" ? (selectedP ? `${selectedP}P${selectedWidth && selectedHeight ? ` · ${selectedWidth}×${selectedHeight}` : ""}` : "最高可用") : "最佳音频";
       if (kind === "video") qualityStatusEl.textContent = selectedQuality;
       if (job.status === "completed") {
         const meta = [kind === "video" ? `画质 ${selectedQuality}` : "最佳音频", "已保存到 Downloads\\OmniFetch"];

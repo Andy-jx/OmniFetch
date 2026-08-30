@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OmniFetch 流媒体下载</title>
+  <link rel="stylesheet" href="stream.css" />
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div>
+        <div class="brand">OmniFetch</div>
+        <h1 id="title">正在分析流媒体…</h1>
+        <p id="source" class="source"></p>
+      </div>
+      <span id="helperBadge" class="badge">检测本地助手</span>
+    </header>
+
+    <section class="panel summary-panel">
+      <div class="summary-grid">
+        <div><span class="label">类型</span><strong id="streamType">STREAM</strong></div>
+        <div><span class="label">平台</span><strong id="platform">通用网页</strong></div>
+        <div><span class="label">并发分片</span><strong>8</strong></div>
+        <div><span class="label">状态</span><strong id="probeStatus">准备分析</strong></div>
+      </div>
+      <div class="top-actions">
+        <button id="bestBtn" class="btn primary" disabled>最高画质下载</button>
+        <button id="retryBtn" class="btn">重新分析</button>
+        <button id="copyBtn" class="btn">复制媒体地址</button>
+      </div>
+    </section>
+
+    <section id="progressPanel" class="panel progress-panel hidden">
+      <div class="progress-head">
+        <strong id="progressTitle">正在下载</strong>
+        <span id="progressPercent">0%</span>
+      </div>
+      <div class="progress-track"><div id="progressBar" class="progress-bar"></div></div>
+      <div id="progressMeta" class="progress-meta">正在准备…</div>
+    </section>
+
+    <section class="panel">
+      <div class="section-head">
+        <div>
+          <h2>可用清晰度</h2>
+          <p>视频轨缺少音频时，OmniFetch 会自动选择最佳音频并用 FFmpeg 合并。</p>
+        </div>
+        <span id="formatCount" class="count">0</span>
+      </div>
+      <div id="formatList" class="format-list">
+        <div class="empty">正在读取 M3U8 / DASH / 页面格式信息…</div>
+      </div>
+    </section>
+
+    <footer>
+      仅处理你有权保存、平台允许下载或公开可访问的媒体内容。DRM、付费墙和访问控制不会被绕过。
+    </footer>
+  </main>
+  <script src="stream.js"></script>
+</body>
+</html>

@@ -15,11 +15,29 @@ import yt_dlp
 
 HOST = "127.0.0.1"
 PORT = 17891
+VERSION = "0.2.0"
 DOWNLOAD_DIR = Path.home() / "Downloads" / "OmniFetch"
 TOOLS_DIR = Path(__file__).resolve().parent / "tools"
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
 ALLOWED_EXTENSION_ORIGINS = ("chrome-extension://", "edge-extension://")
+
+PLATFORM_RULES = (
+    (("x.com", "twitter.com"), "X / Twitter"),
+    (("youtube.com", "youtu.be"), "YouTube"),
+    (("tiktok.com",), "TikTok"),
+    (("douyin.com", "iesdouyin.com"), "抖音"),
+    (("bilibili.com", "b23.tv"), "哔哩哔哩"),
+    (("instagram.com",), "Instagram"),
+    (("facebook.com", "fb.watch"), "Facebook"),
+    (("xiaohongshu.com", "xhslink.com"), "小红书"),
+    (("kuaishou.com", "gifshow.com"), "快手"),
+    (("vimeo.com",), "Vimeo"),
+    (("twitch.tv",), "Twitch"),
+    (("reddit.com", "redd.it"), "Reddit"),
+    (("dailymotion.com", "dai.ly"), "Dailymotion"),
+    (("soundcloud.com",), "SoundCloud"),
+)
 
 
 def now_ts() -> int:
@@ -52,9 +70,19 @@ def safe_http_url(value: str | None) -> str:
     except ValueError as exc:
         if str(exc) == "不允许下载本机或局域网地址":
             raise
-        # 普通域名不是 IP，继续处理。
 
     return value
+
+
+def detect_platform(value: str) -> str:
+    try:
+        host = (urlparse(value).hostname or "").lower()
+    except Exception:
+        return "通用网页"
+    for domains, name in PLATFORM_RULES:
+        if any(host == domain or host.endswith(f".{domain}") for domain in domains):
+            return name
+    return "通用网页"
 
 
 def find_ffmpeg() -> str | None:
@@ -118,6 +146,7 @@ def base_ydl_options(job_id: str, page_url: str) -> dict:
         "continuedl": True,
         "retries": 5,
         "fragment_retries": 5,
+        "file_access_retries": 3,
         "progress_hooks": [progress_hook(job_id)],
         "http_headers": {
             "Referer": page_url or "",
@@ -138,59 +167,130 @@ def base_ydl_options(job_id: str, page_url: str) -> dict:
             }
         )
     else:
-        # 没有 FFmpeg 时优先选择已经包含音视频的单文件格式。
         opts["format"] = "b[ext=mp4]/b"
 
     return opts
+
+
+def make_attempts(
+    job_id: str,
+    page_url: str,
+    media_url: str,
+    fallback_urls: list[str],
+    browser: str,
+) -> list[tuple[str, str, dict]]:
+    base_opts = base_ydl_options(job_id, page_url)
+    browser_ok = browser in {"chrome", "edge", "firefox"}
+    attempts: list[tuple[str, str, dict]] = []
+
+    def add_target(label: str, target: str, use_cookies: bool) -> None:
+        if not target:
+            return
+        opts = dict(base_opts)
+        opts["http_headers"] = dict(base_opts.get("http_headers") or {})
+        if use_cookies and browser_ok:
+            opts["cookiesfrombrowser"] = (browser,)
+        attempts.append((label, target, opts))
+
+    if media_url:
+        if browser_ok:
+            add_target("captured-media-cookies", media_url, True)
+        add_target("captured-media", media_url, False)
+        return attempts
+
+    if page_url:
+        if browser_ok:
+            add_target("page-extractor-cookies", page_url, True)
+        add_target("page-extractor", page_url, False)
+
+    seen = {page_url, media_url, ""}
+    for index, url in enumerate(fallback_urls[:10], start=1):
+        if url in seen:
+            continue
+        seen.add(url)
+        if browser_ok:
+            add_target(f"captured-fallback-{index}-cookies", url, True)
+        add_target(f"captured-fallback-{index}", url, False)
+
+    return attempts
 
 
 def run_download(job_id: str, payload: dict) -> None:
     try:
         page_url = safe_http_url(payload.get("page_url"))
         media_url = safe_http_url(payload.get("media_url"))
-        target_url = media_url or page_url
-        if not target_url:
-            raise ValueError("缺少 page_url 或 media_url")
-
-        title_hint = str(payload.get("title") or "").strip()
         browser = str(payload.get("browser") or "").strip().lower()
+        title_hint = str(payload.get("title") or "").strip()
 
-        update_job(job_id, status="starting", target_url=target_url)
-        opts = base_ydl_options(job_id, page_url)
+        raw_fallbacks = payload.get("fallback_media_urls") or []
+        if not isinstance(raw_fallbacks, list):
+            raw_fallbacks = []
+        fallback_urls: list[str] = []
+        for raw in raw_fallbacks[:12]:
+            try:
+                value = safe_http_url(str(raw))
+            except ValueError:
+                continue
+            if value and value not in fallback_urls:
+                fallback_urls.append(value)
 
-        # 对页面地址优先尝试读取用户自己的浏览器登录状态。
-        # 读取失败时自动无 Cookie 重试，公开页面仍可继续下载。
-        use_browser_cookies = bool(page_url and not media_url and browser in {"chrome", "edge", "firefox"})
+        if not page_url and not media_url and not fallback_urls:
+            raise ValueError("缺少可下载地址")
 
-        attempts: list[tuple[str, dict]] = []
-        if use_browser_cookies:
-            cookie_opts = dict(opts)
-            cookie_opts["cookiesfrombrowser"] = (browser,)
-            attempts.append(("browser-cookies", cookie_opts))
-        attempts.append(("plain", opts))
+        platform = detect_platform(page_url or media_url or fallback_urls[0])
+        update_job(
+            job_id,
+            status="starting",
+            platform=platform,
+            target_url=media_url or page_url or fallback_urls[0],
+            fallback_count=len(fallback_urls),
+        )
+
+        attempts = make_attempts(job_id, page_url, media_url, fallback_urls, browser)
+        if not attempts:
+            raise ValueError("没有可用的下载策略")
 
         last_error: Exception | None = None
-        for index, (mode, ydl_opts) in enumerate(attempts):
-            update_job(job_id, status="resolving", mode=mode)
+        total_attempts = len(attempts)
+        for index, (mode, target_url, ydl_opts) in enumerate(attempts, start=1):
+            update_job(
+                job_id,
+                status="resolving",
+                mode=mode,
+                strategy=mode,
+                attempt=index,
+                attempt_total=total_attempts,
+                target_url=target_url,
+                error=None,
+            )
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(target_url, download=True)
                     final_title = (info or {}).get("title") or title_hint or "video"
                     final_id = (info or {}).get("id") or ""
+                    extractor = (info or {}).get("extractor_key") or (info or {}).get("extractor") or ""
                     update_job(
                         job_id,
                         status="completed",
                         percent=100,
                         title=final_title,
                         media_id=final_id,
+                        extractor=extractor,
                         output_dir=str(DOWNLOAD_DIR),
+                        strategy=mode,
                         error=None,
                     )
                     return
             except Exception as exc:
                 last_error = exc
-                if index + 1 < len(attempts):
-                    update_job(job_id, status="retrying", error=str(exc))
+                if index < total_attempts:
+                    update_job(
+                        job_id,
+                        status="retrying",
+                        error=str(exc),
+                        next_attempt=index + 1,
+                        attempt_total=total_attempts,
+                    )
                     continue
                 raise
 
@@ -222,7 +322,7 @@ def create_job(payload: dict) -> str:
 
 
 class OmniFetchHandler(BaseHTTPRequestHandler):
-    server_version = "OmniFetchHelper/0.1.0"
+    server_version = f"OmniFetchHelper/{VERSION}"
 
     def log_message(self, fmt: str, *args) -> None:
         print(f"[{self.log_date_time_string()}] {fmt % args}")
@@ -271,9 +371,23 @@ class OmniFetchHandler(BaseHTTPRequestHandler):
                 {
                     "ok": True,
                     "service": "OmniFetch Helper",
-                    "version": "0.1.0",
+                    "version": VERSION,
                     "download_dir": str(DOWNLOAD_DIR),
                     "ffmpeg": bool(find_ffmpeg()),
+                    "strategy": "page extractor + captured media fallback",
+                },
+            )
+            return
+
+        if path == "/capabilities":
+            self.send_json(
+                200,
+                {
+                    "ok": True,
+                    "version": VERSION,
+                    "known_platforms": [name for _, name in PLATFORM_RULES],
+                    "generic_capture": True,
+                    "formats": ["MP4", "WebM", "M3U8/HLS", "DASH/MPD", "MOV", "M4V"],
                 },
             )
             return
@@ -317,11 +431,25 @@ class OmniFetchHandler(BaseHTTPRequestHandler):
 
             page_url = safe_http_url(payload.get("page_url"))
             media_url = safe_http_url(payload.get("media_url"))
-            if not page_url and not media_url:
-                raise ValueError("缺少 page_url 或 media_url")
+            raw_fallbacks = payload.get("fallback_media_urls") or []
+            if not isinstance(raw_fallbacks, list):
+                raise ValueError("fallback_media_urls 格式错误")
+
+            fallback_urls: list[str] = []
+            for raw_url in raw_fallbacks[:12]:
+                try:
+                    value = safe_http_url(str(raw_url))
+                except ValueError:
+                    continue
+                if value and value not in fallback_urls:
+                    fallback_urls.append(value)
+
+            if not page_url and not media_url and not fallback_urls:
+                raise ValueError("缺少 page_url、media_url 或 fallback_media_urls")
 
             payload["page_url"] = page_url
             payload["media_url"] = media_url
+            payload["fallback_media_urls"] = fallback_urls
             job_id = create_job(payload)
             self.send_json(
                 202,
@@ -329,6 +457,7 @@ class OmniFetchHandler(BaseHTTPRequestHandler):
                     "ok": True,
                     "job_id": job_id,
                     "status": "queued",
+                    "platform": detect_platform(page_url or media_url or fallback_urls[0]),
                     "output_dir": str(DOWNLOAD_DIR),
                 },
             )
@@ -343,10 +472,11 @@ class OmniFetchHandler(BaseHTTPRequestHandler):
 def main() -> None:
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     print("=" * 62)
-    print("OmniFetch Local Helper v0.1.0")
+    print(f"OmniFetch Local Helper v{VERSION}")
     print(f"Listening : http://{HOST}:{PORT}")
     print(f"Downloads : {DOWNLOAD_DIR}")
     print(f"FFmpeg    : {'available' if find_ffmpeg() else 'not found (single-file fallback)'}")
+    print("Mode      : multi-platform extractor + captured media fallback")
     print("Press Ctrl+C to stop.")
     print("=" * 62)
 

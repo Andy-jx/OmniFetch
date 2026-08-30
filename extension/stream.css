@@ -1,0 +1,223 @@
+* { box-sizing: border-box; }
+
+:root {
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: #0d1117;
+  color: #e6edf3;
+}
+
+button { font: inherit; }
+
+.page {
+  width: min(980px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 34px 0 48px;
+}
+
+.hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 18px;
+}
+
+.brand {
+  color: #58a6ff;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 7px 0 6px;
+  max-width: 760px;
+  font-size: 26px;
+  line-height: 1.3;
+}
+
+.source {
+  margin: 0;
+  max-width: 780px;
+  overflow: hidden;
+  color: #8b949e;
+  font-size: 12px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border: 1px solid #30363d;
+  border-radius: 999px;
+  color: #8b949e;
+  font-size: 12px;
+}
+.badge.ok { color: #7ee787; border-color: #238636; }
+.badge.bad { color: #ffa198; border-color: #da3633; }
+
+.panel {
+  margin-top: 14px;
+  padding: 18px;
+  border: 1px solid #30363d;
+  border-radius: 14px;
+  background: #161b22;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.summary-grid > div {
+  min-height: 70px;
+  padding: 12px;
+  border: 1px solid #21262d;
+  border-radius: 10px;
+  background: #0d1117;
+}
+
+.label {
+  display: block;
+  margin-bottom: 8px;
+  color: #8b949e;
+  font-size: 11px;
+}
+
+.summary-grid strong { font-size: 14px; }
+
+.top-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 14px;
+}
+
+.btn {
+  border: 1px solid #30363d;
+  border-radius: 9px;
+  background: #21262d;
+  color: #e6edf3;
+  padding: 9px 13px;
+  cursor: pointer;
+}
+.btn:hover { background: #30363d; }
+.btn.primary { border-color: #1f6feb; background: #1f6feb; font-weight: 700; }
+.btn.primary:hover { background: #388bfd; }
+.btn:disabled { opacity: .45; cursor: default; }
+
+.section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+h2 { margin: 0; font-size: 17px; }
+.section-head p { margin: 6px 0 0; color: #8b949e; font-size: 12px; }
+.count {
+  display: inline-flex;
+  min-width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #21262d;
+  color: #79c0ff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.format-list {
+  display: grid;
+  gap: 9px;
+  margin-top: 15px;
+}
+
+.format-card {
+  display: grid;
+  grid-template-columns: minmax(120px, .8fr) minmax(220px, 1.5fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 13px;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  background: #0d1117;
+}
+
+.quality {
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.format-meta {
+  color: #8b949e;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.format-download {
+  border: 1px solid #238636;
+  border-radius: 8px;
+  background: #238636;
+  color: #fff;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-weight: 700;
+}
+.format-download:hover { background: #2ea043; }
+.format-download:disabled { opacity: .5; cursor: default; }
+
+.empty {
+  padding: 30px 20px;
+  border: 1px dashed #30363d;
+  border-radius: 10px;
+  color: #8b949e;
+  text-align: center;
+  line-height: 1.7;
+}
+
+.progress-panel { position: sticky; top: 12px; z-index: 3; box-shadow: 0 8px 30px rgba(0,0,0,.25); }
+.hidden { display: none; }
+.progress-head { display: flex; justify-content: space-between; gap: 16px; }
+.progress-track {
+  height: 9px;
+  margin-top: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #21262d;
+}
+.progress-bar {
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: #2f81f7;
+  transition: width .2s ease;
+}
+.progress-meta { margin-top: 9px; color: #8b949e; font-size: 12px; }
+
+footer {
+  margin-top: 18px;
+  color: #6e7681;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+@media (max-width: 720px) {
+  .page { width: min(100% - 20px, 980px); padding-top: 20px; }
+  .hero { flex-direction: column; }
+  .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .format-card { grid-template-columns: 1fr; }
+  .format-download { width: 100%; }
+}

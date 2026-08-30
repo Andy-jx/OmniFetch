@@ -1,14 +1,7 @@
 const MEDIA_BY_TAB = new Map();
 
 const MEDIA_EXTENSIONS = [
-  ".mp4",
-  ".webm",
-  ".m3u8",
-  ".mpd",
-  ".mov",
-  ".m4v",
-  ".ts",
-  ".m4s"
+  ".mp4", ".webm", ".m3u8", ".mpd", ".mov", ".m4v", ".ts", ".m4s", ".flv", ".mp3", ".m4a", ".aac"
 ];
 
 function classifyMedia(url, contentType = "") {
@@ -18,8 +11,12 @@ function classifyMedia(url, contentType = "") {
   if (type.includes("dash+xml") || clean.endsWith(".mpd")) return "dash";
   if (type.includes("video/mp4") || clean.endsWith(".mp4")) return "mp4";
   if (type.includes("video/webm") || clean.endsWith(".webm")) return "webm";
+  if (clean.endsWith(".flv")) return "flv";
   if (clean.endsWith(".mov")) return "mov";
   if (clean.endsWith(".m4v")) return "m4v";
+  if (type.includes("audio/mpeg") || clean.endsWith(".mp3")) return "mp3";
+  if (clean.endsWith(".m4a")) return "m4a";
+  if (clean.endsWith(".aac")) return "aac";
   if (clean.endsWith(".ts") || clean.endsWith(".m4s")) return "segment";
   if (type.startsWith("video/")) return "video";
   if (type.startsWith("audio/")) return "audio";
@@ -56,22 +53,38 @@ function isMediaContentType(value) {
 
 function scoreMedia(item) {
   let score = 0;
-  if (["mp4", "webm", "video"].includes(item.type)) score += 55;
-  if (item.type === "hls") score += 50;
-  if (item.type === "dash") score += 45;
+  if (["mp4", "webm", "video", "flv"].includes(item.type)) score += 60;
+  if (item.type === "hls") score += 58;
+  if (item.type === "dash") score += 52;
+  if (["mp3", "m4a", "aac", "audio"].includes(item.type)) score += 35;
   if (item.source === "video-element") score += 35;
   if (item.source === "response-header") score += 25;
   if (item.source === "network") score += 15;
   if ((item.contentLength || 0) > 5 * 1024 * 1024) score += 20;
   if ((item.contentLength || 0) > 50 * 1024 * 1024) score += 10;
-  if (item.url.includes("video.twimg.com")) score += 20;
-  if (item.type === "segment") score -= 50;
+  if (item.type === "segment") score -= 80;
   return score;
 }
 
 function getTabItems(tabId) {
   if (!MEDIA_BY_TAB.has(tabId)) MEDIA_BY_TAB.set(tabId, new Map());
   return MEDIA_BY_TAB.get(tabId);
+}
+
+function visibleItems(tabId) {
+  return [...(MEDIA_BY_TAB.get(tabId)?.values() || [])]
+    .filter((item) => item.type !== "segment")
+    .sort((a, b) => b.score - a.score || b.detectedAt - a.detectedAt);
+}
+
+async function refreshBadge(tabId) {
+  if (!Number.isInteger(tabId) || tabId < 0) return;
+  const count = visibleItems(tabId).length;
+  try {
+    await chrome.action.setBadgeBackgroundColor({ tabId, color: "#1677ff" });
+    await chrome.action.setBadgeText({ tabId, text: count ? String(Math.min(count, 99)) : "" });
+    await chrome.action.setTitle({ tabId, title: count ? `OmniFetch · 已捕获 ${count} 个媒体资源` : "OmniFetch · 等待媒体资源" });
+  } catch (_) {}
 }
 
 function addCandidate(tabId, candidate) {
@@ -100,6 +113,7 @@ function addCandidate(tabId, candidate) {
     items.clear();
     for (const item of sorted.slice(0, 100)) items.set(item.url, item);
   }
+  refreshBadge(tabId);
 }
 
 chrome.webRequest.onBeforeRequest.addListener(
@@ -135,49 +149,38 @@ chrome.webRequest.onHeadersReceived.addListener(
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "OMNIFETCH_MEDIA_CANDIDATES") {
     const tabId = sender.tab?.id;
-    for (const candidate of message.items || []) {
-      addCandidate(tabId, candidate);
-    }
+    for (const candidate of message.items || []) addCandidate(tabId, candidate);
     sendResponse({ ok: true });
     return;
   }
 
   if (message?.type === "OMNIFETCH_GET_MEDIA") {
-    const tabId = message.tabId;
-    const items = [...(MEDIA_BY_TAB.get(tabId)?.values() || [])]
-      .filter((item) => item.type !== "segment")
-      .sort((a, b) => b.score - a.score || b.detectedAt - a.detectedAt);
+    const items = visibleItems(message.tabId);
     sendResponse({ ok: true, items: items.slice(0, 40) });
     return;
   }
 
   if (message?.type === "OMNIFETCH_CLEAR_MEDIA") {
     MEDIA_BY_TAB.delete(message.tabId);
+    refreshBadge(message.tabId);
     sendResponse({ ok: true });
     return;
   }
 
   if (message?.type === "OMNIFETCH_DIRECT_DOWNLOAD") {
-    chrome.downloads.download(
-      {
-        url: message.url,
-        saveAs: true
-      },
-      (downloadId) => {
-        const error = chrome.runtime.lastError?.message;
-        sendResponse({ ok: !error, downloadId, error });
-      }
-    );
+    chrome.downloads.download({ url: message.url, saveAs: true }, (downloadId) => {
+      const error = chrome.runtime.lastError?.message;
+      sendResponse({ ok: !error, downloadId, error });
+    });
     return true;
   }
 });
 
-chrome.tabs.onRemoved.addListener((tabId) => {
-  MEDIA_BY_TAB.delete(tabId);
-});
+chrome.tabs.onRemoved.addListener((tabId) => MEDIA_BY_TAB.delete(tabId));
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === "loading" && changeInfo.url) {
     MEDIA_BY_TAB.delete(tabId);
+    refreshBadge(tabId);
   }
 });

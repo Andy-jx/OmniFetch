@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "OmniFetch 全平台下载助手",
-  "version": "0.4.0",
-  "description": "像媒体嗅探器一样自动捕获网页视频；支持 MP4/WebM 直存、HLS/M3U8/DASH 清晰度分析、分片并发下载与自动合并。",
+  "version": "0.5.0",
+  "description": "网页媒体嗅探下载器：支持 MP4/WebM 直存、HLS/M3U8/DASH 清晰度选择与并发合并，并提供标签页录制兜底模式。",
   "permissions": [
     "activeTab",
     "downloads",
     "storage",
     "tabs",
+    "tabCapture",
     "webRequest"
   ],
   "host_permissions": [

@@ -45,19 +45,19 @@ if not exist "%OMNIFETCH_LINK%" (
     exit /b 1
 )
 
-echo [2/4] Starting OmniFetch Helper v0.5.8 in background...
+echo [2/4] Starting OmniFetch Helper v0.5.9 in background...
 start "" wscript.exe "%~dp0start-helper-hidden.vbs"
 
 timeout /t 2 /nobreak >nul
 
 echo [3/4] Checking local helper version...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $r=Invoke-RestMethod -Uri 'http://127.0.0.1:17891/health' -TimeoutSec 4; if($r.ok -eq $true -and $r.version -eq '0.5.8'){exit 0}else{exit 2} } catch { exit 1 }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $r=Invoke-RestMethod -Uri 'http://127.0.0.1:17891/health' -TimeoutSec 4; if($r.ok -eq $true -and $r.version -eq '0.5.9'){exit 0}else{exit 2} } catch { exit 1 }"
 
 if errorlevel 1 (
     echo.
-    echo [ERROR] OmniFetch Helper v0.5.8 did not become ready.
+    echo [ERROR] OmniFetch Helper v0.5.9 did not become ready.
     echo Close old OmniFetch windows, then run this installer again.
-    echo Do not test downloads until the extension shows Helper v0.5.8.
+    echo Do not test downloads until the extension shows Helper v0.5.9.
     echo.
     pause
     exit /b 1
@@ -65,7 +65,7 @@ if errorlevel 1 (
 
 echo [4/4] Ready.
 echo.
-echo [OK] OmniFetch Helper v0.5.8 is running and Windows autostart is installed.
+echo [OK] OmniFetch Helper v0.5.9 is running and Windows autostart is installed.
 echo Keep the whole OmniFetch folder in its current location.
 echo To remove autostart later, run uninstall-autostart.bat.
 echo.

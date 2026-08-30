@@ -8,6 +8,15 @@ const AD_MARKERS = [
   "doubleclick", "googleads", "adservice", "/ads/", "/ad/", "preroll", "pre-roll", "vast", "vpaid", "tracking"
 ];
 
+const REQUEST_HEADER_NAMES = new Map([
+  ["referer", "Referer"],
+  ["origin", "Origin"],
+  ["user-agent", "User-Agent"],
+  ["cookie", "Cookie"],
+  ["accept", "Accept"],
+  ["accept-language", "Accept-Language"]
+]);
+
 function cleanPath(url) {
   return String(url || "").toLowerCase().split("?")[0].split("#")[0];
 }
@@ -16,8 +25,6 @@ function classifyMedia(url, contentType = "") {
   const clean = cleanPath(url);
   const type = String(contentType || "").toLowerCase();
 
-  // Fragment extensions must win over generic video/mp4 response headers.
-  // Sites such as X return .m4s chunks with Content-Type: video/mp4.
   if (clean.endsWith(".ts") || clean.endsWith(".m4s")) return "segment";
 
   if (type.startsWith("audio/")) {
@@ -58,6 +65,18 @@ function headerValue(headers = [], name) {
   return String(row?.value || "");
 }
 
+function requestHeadersFromWebRequest(headers = []) {
+  const result = {};
+  for (const header of headers || []) {
+    const lower = String(header?.name || "").toLowerCase();
+    const canonical = REQUEST_HEADER_NAMES.get(lower);
+    const value = String(header?.value || "");
+    if (!canonical || !value) continue;
+    result[canonical] = value;
+  }
+  return result;
+}
+
 function contentTypeFromHeaders(headers = []) {
   return headerValue(headers, "content-type").toLowerCase();
 }
@@ -81,11 +100,12 @@ function isMediaContentType(value) {
 function scoreMedia(item) {
   let score = 0;
   if (["mp4", "webm", "video", "flv"].includes(item.type)) score += 60;
-  if (item.type === "hls") score += 58;
-  if (item.type === "dash") score += 52;
+  if (item.type === "hls") score += 78;
+  if (item.type === "dash") score += 72;
   if (["mp3", "m4a", "aac", "audio"].includes(item.type)) score += 32;
   if (item.source === "video-element") score += 38;
   if (item.source === "response-header") score += 25;
+  if (item.source === "request-header") score += 24;
   if (item.source === "network") score += 15;
   if (item.source === "performance") score += 12;
   if ((item.contentLength || 0) > 5 * 1024 * 1024) score += 20;
@@ -133,6 +153,10 @@ function addCandidate(tabId, candidate) {
   const existing = items.get(candidate.url);
   const contentType = candidate.contentType || existing?.contentType || "";
   const type = candidate.type || classifyMedia(candidate.url, contentType);
+  const requestHeaders = {
+    ...(existing?.requestHeaders || {}),
+    ...(candidate.requestHeaders || {})
+  };
   const merged = {
     url: candidate.url,
     type,
@@ -143,6 +167,7 @@ function addCandidate(tabId, candidate) {
     title: candidate.title || existing?.title || "",
     pageUrl: candidate.pageUrl || existing?.pageUrl || "",
     initiator: candidate.initiator || existing?.initiator || "",
+    requestHeaders,
     likelyAd: looksLikeAd(candidate.url),
     detectedAt: Date.now()
   };
@@ -171,6 +196,22 @@ chrome.webRequest.onBeforeRequest.addListener(
   { urls: ["<all_urls>"] }
 );
 
+chrome.webRequest.onBeforeSendHeaders.addListener(
+  (details) => {
+    if (details.tabId < 0) return;
+    if (!looksLikeMedia(details.url) && details.type !== "media") return;
+    addCandidate(details.tabId, {
+      url: details.url,
+      type: classifyMedia(details.url),
+      requestHeaders: requestHeadersFromWebRequest(details.requestHeaders || []),
+      source: "request-header",
+      initiator: details.initiator || ""
+    });
+  },
+  { urls: ["<all_urls>"] },
+  ["requestHeaders", "extraHeaders"]
+);
+
 chrome.webRequest.onHeadersReceived.addListener(
   (details) => {
     if (details.tabId < 0) return;
@@ -188,7 +229,7 @@ chrome.webRequest.onHeadersReceived.addListener(
     });
   },
   { urls: ["<all_urls>"] },
-  ["responseHeaders"]
+  ["responseHeaders", "extraHeaders"]
 );
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -202,6 +243,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "OMNIFETCH_GET_MEDIA") {
     const items = visibleItems(message.tabId);
     sendResponse({ ok: true, items: items.slice(0, 50) });
+    return;
+  }
+
+  if (message?.type === "OMNIFETCH_GET_REQUEST_CONTEXT") {
+    const item = MEDIA_BY_TAB.get(message.tabId)?.get(message.url);
+    sendResponse({ ok: true, headers: item?.requestHeaders || {} });
     return;
   }
 

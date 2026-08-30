@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "OmniFetch 全平台下载助手",
-  "version": "0.2.0",
-  "description": "智能解析网页视频，并在解析失败时自动回退到浏览器捕获的 MP4、WebM、M3U8/HLS、DASH 等媒体流。",
+  "version": "0.3.0",
+  "description": "像媒体嗅探器一样自动捕获网页中的 MP4、WebM、HLS/M3U8、DASH 等资源，图标角标显示捕获数量并支持一键保存。",
   "permissions": [
     "activeTab",
     "downloads",

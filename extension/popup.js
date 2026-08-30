@@ -7,6 +7,7 @@ const mediaListEl = document.getElementById("mediaList");
 const captureCountEl = document.getElementById("captureCount");
 const downloadPageBtn = document.getElementById("downloadPage");
 const refreshBtn = document.getElementById("refresh");
+const recordModeBtn = document.getElementById("recordMode");
 const clearBtn = document.getElementById("clear");
 
 let activeTab = null;
@@ -146,6 +147,20 @@ async function openStreamDetails(item) {
   await chrome.tabs.create({ url: `${chrome.runtime.getURL("stream.html")}?${params.toString()}` });
 }
 
+async function openRecorder() {
+  if (!activeTab?.id || !Number.isInteger(activeTab.id)) {
+    throw new Error("没有可录制的目标标签页。");
+  }
+  if (!/^https?:/i.test(activeTab.url || "")) {
+    throw new Error("当前页面不能使用录制兜底模式。");
+  }
+  const params = new URLSearchParams({
+    tabId: String(activeTab.id),
+    title: activeTab.title || "网页视频"
+  });
+  await chrome.tabs.create({ url: `${chrome.runtime.getURL("recorder.html")}?${params.toString()}` });
+}
+
 async function downloadItem(item) {
   if (DIRECT_TYPES.has(item.type)) {
     await directDownload(item.url);
@@ -249,7 +264,7 @@ async function renderMedia() {
   if (!currentMediaItems.length) {
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.textContent = "还没有捕获到媒体。先播放视频 2–5 秒；捕获成功后，浏览器右上角 OmniFetch 图标会出现数字角标。";
+    empty.textContent = "还没有捕获到媒体。先播放视频 2–5 秒；如果仍然是 0，可以使用上方“录制兜底”。";
     mediaListEl.append(empty);
     setStatus("等待网页产生媒体请求…");
     return;
@@ -310,6 +325,18 @@ downloadPageBtn.addEventListener("click", async () => {
     setStatus(error.message || "下载失败");
   } finally {
     downloadPageBtn.disabled = false;
+  }
+});
+
+recordModeBtn.addEventListener("click", async () => {
+  recordModeBtn.disabled = true;
+  try {
+    await openRecorder();
+    setStatus("已打开录制兜底页。该模式会实时录制标签页画面和声音。");
+  } catch (error) {
+    setStatus(error.message || "无法打开录制模式");
+  } finally {
+    recordModeBtn.disabled = false;
   }
 });
 

@@ -13,26 +13,28 @@
         <h1>OmniFetch</h1>
         <p id="pageTitle" class="muted">正在读取当前页面…</p>
       </div>
-      <div class="badge-stack">
-        <span id="platformBadge" class="badge">通用网页</span>
-        <span id="helperBadge" class="badge">助手检测中</span>
-      </div>
+      <span id="helperBadge" class="badge">流媒体助手检测中</span>
     </header>
 
     <section class="primary-actions">
-      <button id="downloadPage" class="btn primary">智能下载当前视频</button>
+      <button id="downloadPage" class="btn primary">下载当前视频</button>
       <button id="refresh" class="btn">重新检测</button>
     </section>
 
     <section class="status-row">
-      <span id="statusText">播放视频几秒后，识别率更高。</span>
+      <span id="statusText">播放视频后，图标角标会显示捕获数量。</span>
       <button id="clear" class="link-btn">清空</button>
+    </section>
+
+    <section class="list-title">
+      <strong id="captureTitle">已捕获资源</strong>
+      <span id="captureCount">0</span>
     </section>
 
     <section id="mediaList" class="media-list"></section>
 
     <footer>
-      <span>优先解析当前页面，失败后自动尝试浏览器捕获到的媒体流。仅处理你有权保存或平台允许下载的内容。</span>
+      <span>工作方式：监听页面真实媒体请求，不依赖特定网站。MP4/WebM 等直接保存；HLS/M3U8/DASH 交给本地助手合并。仅处理你有权保存的内容。</span>
     </footer>
   </main>
   <script src="popup.js"></script>

@@ -1,5 +1,5 @@
 const HELPER_BASE = "http://127.0.0.1:17891";
-const REQUIRED_HELPER = [0, 5, 4];
+const REQUIRED_HELPER = [0, 5, 5];
 
 const pageTitleEl = document.getElementById("pageTitle");
 const helperBadgeEl = document.getElementById("helperBadge");
@@ -136,7 +136,8 @@ async function pollJob(jobId, kind) {
       if (job.status === "completed") {
         const bytes = Number(job.output_bytes || 0);
         const suffix = bytes ? ` · ${(bytes / 1024 / 1024).toFixed(1)} MB` : "";
-        setStatus(`${kind === "audio" ? "音频" : "视频"}下载完成：${job.title || "文件"}${suffix}`);
+        const quality = job.selected_height ? ` · ${job.selected_height}P` : "";
+        setStatus(`${kind === "audio" ? "音频" : "视频"}下载完成：${job.title || "文件"}${quality}${suffix}`);
         return;
       }
       if (job.status === "failed") {
@@ -164,9 +165,9 @@ async function helperDownload(payload, kind = "video") {
   const ready = await checkHelper();
   if (!ready) {
     if (helperOnline) {
-      throw new Error(`后台助手还是 v${helperVersion || "旧版"}。请运行 v0.5.4 的 install-autostart.bat，看到 Helper v0.5.4 后再下载。`);
+      throw new Error(`后台助手还是 v${helperVersion || "旧版"}。请运行 v0.5.5 的 install-autostart.bat，看到 Helper v0.5.5 后再下载。`);
     }
-    throw new Error("流媒体助手未启动。请运行 v0.5.4 的 install-autostart.bat 或 run-helper.bat。");
+    throw new Error("流媒体助手未启动。请运行 v0.5.5 的 install-autostart.bat 或 run-helper.bat。");
   }
 
   const res = await fetch(`${HELPER_BASE}/download`, {
@@ -215,20 +216,20 @@ function renderSummary() {
   const audioCount = currentMediaItems.filter((item) => AUDIO_TYPES.has(item.type)).length;
 
   if (stream) {
-    videoHintEl.textContent = `${String(stream.type).toUpperCase()} 播放清单已捕获 · 点击后进入专用下载页，自动取最高画质`;
+    videoHintEl.textContent = `${String(stream.type).toUpperCase()} 播放清单已捕获 · 下载时显式选择最高分辨率`;
   } else if (video) {
     const size = formatBytes(video.contentLength);
     const type = String(video.type || "video").toUpperCase();
     videoHintEl.textContent = `${type}${size ? ` · ${size}` : ""} · 页面解析最高画质，捕获地址只作兜底`;
   } else {
-    videoHintEl.textContent = "未捕获到完整视频地址；仍会直接解析当前页面的最高画质";
+    videoHintEl.textContent = "请先播放视频 1–3 秒，再进行识别";
   }
 
   if (audio) {
     const size = formatBytes(audio.contentLength);
     audioHintEl.textContent = `${String(audio.type || "audio").toUpperCase()}${size ? ` · ${size}` : ""} · 单独下载最佳音轨`;
   } else {
-    audioHintEl.textContent = "未看到独立音频直链；助手会从当前页面或播放清单提取最佳音频";
+    audioHintEl.textContent = "播放后如存在独立音轨，会自动提取最佳音频";
   }
 
   const summary = [];
@@ -237,7 +238,7 @@ function renderSummary() {
   if (audioCount) summary.push(`音频候选 ${audioCount}`);
   captureSummaryEl.textContent = summary.length
     ? `${summary.join(" · ")}；M4S/TS 播放分片已隐藏。`
-    : "暂未识别完整媒体；可先播放几秒后重新检测。";
+    : "尚未确认视频播放。播放 1–3 秒后才显示识别结果。";
 
   downloadVideoBtn.disabled = !validPageUrl() && !video;
   downloadAudioBtn.disabled = !validPageUrl() && !audio && !stream;
@@ -246,15 +247,21 @@ function renderSummary() {
 async function rescan() {
   if (!activeTab?.id) return;
   refreshBtn.disabled = true;
+  setStatus("正在清空旧记录并重新识别…");
   try {
-    await chrome.tabs.sendMessage(activeTab.id, { type: "OMNIFETCH_RESCAN" }).catch(() => null);
-    await sleep(320);
+    const response = await chrome.tabs.sendMessage(activeTab.id, { type: "OMNIFETCH_RESCAN" }).catch(() => null);
+    const waitingForPlayback = Boolean(response?.waitingForPlayback);
+    await sleep(waitingForPlayback ? 350 : 1600);
     currentMediaItems = await getDetectedMedia();
     renderSummary();
     if (helperOnline && !versionAtLeast(helperVersion, REQUIRED_HELPER)) {
-      setStatus(`检测到旧后台助手 v${helperVersion}，请先升级到 v0.5.4。`);
+      setStatus(`检测到旧后台助手 v${helperVersion}，请先升级到 v0.5.5。`);
+    } else if (currentMediaItems.length) {
+      setStatus("重新识别完成。已按播放后的实际媒体请求筛选结果。");
+    } else if (waitingForPlayback) {
+      setStatus("已重新识别。现在播放视频 1–3 秒，再打开 OmniFetch 查看结果。");
     } else {
-      setStatus(currentMediaItems.length ? "识别完成。优先使用 M3U8/DASH 播放清单，并复用浏览器实际请求环境。" : "还没抓到完整媒体，可继续播放几秒再试。");
+      setStatus("正在播放，但暂未抓到完整媒体；继续播放几秒后再点重新识别。");
     }
   } finally {
     refreshBtn.disabled = false;
@@ -268,7 +275,7 @@ downloadVideoBtn.addEventListener("click", async () => {
     const stream = bestStreamCandidate();
     if (stream) {
       await openStreamPage(stream);
-      setStatus("已打开流媒体专用下载页。它会携带浏览器请求头解析并下载播放清单。" );
+      setStatus("已打开流媒体专用下载页。将解析 master.m3u8 并选择最高分辨率。" );
       return;
     }
     const video = bestVideoCandidate();
@@ -333,12 +340,17 @@ clearBtn.addEventListener("click", async () => {
   await chrome.runtime.sendMessage({ type: "OMNIFETCH_CLEAR_MEDIA", tabId: activeTab.id });
   currentMediaItems = [];
   renderSummary();
-  setStatus("已清空当前页面识别记录。重新播放视频即可再次捕获。");
+  setStatus("已清空当前页面识别记录。重新播放视频 1–3 秒即可再次捕获。");
 });
 
 (async () => {
   activeTab = await getActiveTab();
   pageTitleEl.textContent = activeTab?.title || "当前页面";
   await checkHelper();
-  await rescan();
+  currentMediaItems = await getDetectedMedia();
+  renderSummary();
+  setStatus(currentMediaItems.length
+    ? "已读取当前视频播放后的识别结果。"
+    : "请先播放视频 1–3 秒。未实际播放前不会显示识别结果。"
+  );
 })();

@@ -16,16 +16,27 @@
     return /^https?:\/\//i.test(url || "");
   }
 
+  function absoluteUrl(value) {
+    if (!value) return "";
+    try {
+      return new URL(value, location.href).href;
+    } catch (_) {
+      return "";
+    }
+  }
+
   function emit(items) {
     const fresh = [];
     for (const item of items) {
-      if (!validHttpUrl(item.url)) continue;
-      const key = item.url;
+      const resolved = absoluteUrl(item.url);
+      if (!validHttpUrl(resolved)) continue;
+      const key = resolved;
       if (sent.has(key)) continue;
       sent.add(key);
       fresh.push({
         ...item,
-        type: item.type || classify(item.url),
+        url: resolved,
+        type: item.type || classify(resolved),
         title: document.title,
         pageUrl: location.href
       });
@@ -38,20 +49,38 @@
     }).catch(() => {});
   }
 
-  function scanVideoElements() {
+  function scanMediaElements() {
     const found = [];
     document.querySelectorAll("video, audio").forEach((media) => {
-      if (validHttpUrl(media.currentSrc)) {
+      if (media.currentSrc) {
         found.push({ url: media.currentSrc, source: "video-element" });
       }
-      if (validHttpUrl(media.src)) {
+      if (media.src) {
         found.push({ url: media.src, source: "video-element" });
       }
       media.querySelectorAll("source").forEach((source) => {
-        if (validHttpUrl(source.src)) {
+        if (source.src) {
           found.push({ url: source.src, source: "source-element" });
         }
       });
+    });
+    emit(found);
+  }
+
+  function scanMetaTags() {
+    const found = [];
+    const selectors = [
+      'meta[property="og:video"]',
+      'meta[property="og:video:url"]',
+      'meta[property="og:video:secure_url"]',
+      'meta[name="twitter:player:stream"]',
+      'meta[itemprop="contentUrl"]',
+      'link[rel="video_src"]'
+    ];
+
+    document.querySelectorAll(selectors.join(",")).forEach((node) => {
+      const value = node.content || node.href || node.getAttribute("content") || node.getAttribute("href") || "";
+      if (value) found.push({ url: value, source: "meta" });
     });
     emit(found);
   }
@@ -63,7 +92,8 @@
         const url = entry.name || "";
         if (!validHttpUrl(url)) return;
         const lower = url.toLowerCase();
-        if (/\.(mp4|webm|m3u8|mpd|m4v|mov)(\?|#|$)/i.test(lower)) {
+        const initiator = String(entry.initiatorType || "").toLowerCase();
+        if (/\.(mp4|webm|m3u8|mpd|m4v|mov)(\?|#|$)/i.test(lower) || initiator === "video" || initiator === "audio") {
           found.push({ url, source: "performance" });
         }
       });
@@ -72,17 +102,19 @@
   }
 
   function scan() {
-    scanVideoElements();
+    scanMediaElements();
+    scanMetaTags();
     scanPerformanceEntries();
   }
 
   scan();
-  setTimeout(scan, 1500);
-  setTimeout(scan, 4000);
+  setTimeout(scan, 1200);
+  setTimeout(scan, 3500);
+  setTimeout(scan, 7000);
 
   const observer = new MutationObserver(() => {
     clearTimeout(observer._timer);
-    observer._timer = setTimeout(scan, 300);
+    observer._timer = setTimeout(scan, 250);
   });
 
   if (document.documentElement) {
@@ -90,12 +122,14 @@
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["src"]
+      attributeFilter: ["src", "content", "href"]
     });
   }
 
   window.addEventListener("play", scan, true);
   window.addEventListener("loadedmetadata", scan, true);
+  window.addEventListener("popstate", () => setTimeout(scan, 300));
+  window.addEventListener("hashchange", () => setTimeout(scan, 300));
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "OMNIFETCH_RESCAN") {

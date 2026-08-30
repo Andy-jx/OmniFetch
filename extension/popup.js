@@ -10,6 +10,7 @@ const clearBtn = document.getElementById("clear");
 
 let activeTab = null;
 let helperOnline = false;
+const browserName = navigator.userAgent.includes("Edg/") ? "edge" : "chrome";
 
 function setStatus(text) {
   statusTextEl.textContent = text;
@@ -22,6 +23,10 @@ function shortUrl(url) {
 
 function escapeText(value) {
   return String(value || "");
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function getActiveTab() {
@@ -45,6 +50,41 @@ async function checkHelper() {
   helperBadgeEl.className = `badge ${helperOnline ? "ok" : "bad"}`;
 }
 
+async function pollJob(jobId) {
+  for (let attempt = 0; attempt < 180; attempt += 1) {
+    await sleep(1000);
+    try {
+      const res = await fetch(`${HELPER_BASE}/jobs/${jobId}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok || !data.job) continue;
+
+      const job = data.job;
+      if (job.status === "completed") {
+        setStatus(`下载完成：${job.title || "视频"}`);
+        return;
+      }
+      if (job.status === "failed") {
+        setStatus(`下载失败：${job.error || "未知错误"}`);
+        return;
+      }
+
+      const percent = Number.isFinite(job.percent) ? ` ${job.percent}%` : "";
+      const eta = Number.isFinite(job.eta) ? `，剩余约 ${job.eta}s` : "";
+      const labels = {
+        queued: "等待中",
+        starting: "准备下载",
+        resolving: "正在解析",
+        retrying: "正在重试",
+        downloading: "正在下载",
+        processing: "正在合并"
+      };
+      setStatus(`${labels[job.status] || job.status}${percent}${eta}`);
+    } catch (_) {
+      // 弹窗关闭后轮询自然结束；短暂失败时继续等待。
+    }
+  }
+}
+
 async function helperDownload(payload) {
   if (!helperOnline) {
     await checkHelper();
@@ -63,6 +103,7 @@ async function helperDownload(payload) {
   if (!res.ok || !data.ok) {
     throw new Error(data.error || `本地助手返回 ${res.status}`);
   }
+  pollJob(data.job_id);
   return data;
 }
 
@@ -110,7 +151,7 @@ function createMediaCard(item) {
           media_url: item.url,
           page_url: activeTab?.url || item.pageUrl || "",
           title: activeTab?.title || item.title || "",
-          browser: "chrome"
+          browser: browserName
         });
         setStatus(`已创建下载任务：${result.job_id}`);
       }
@@ -168,7 +209,7 @@ async function rescan() {
   refreshBtn.disabled = true;
   try {
     await chrome.tabs.sendMessage(activeTab.id, { type: "OMNIFETCH_RESCAN" }).catch(() => null);
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await sleep(250);
     await renderMedia();
   } finally {
     refreshBtn.disabled = false;
@@ -186,7 +227,7 @@ downloadPageBtn.addEventListener("click", async () => {
     const result = await helperDownload({
       page_url: activeTab.url,
       title: activeTab.title || "",
-      browser: "chrome"
+      browser: browserName
     });
     setStatus(`已创建页面下载任务：${result.job_id}`);
   } catch (error) {

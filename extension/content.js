@@ -118,7 +118,9 @@
         type: "OMNIFETCH_PLAYBACK_STARTED",
         pageUrl: location.href,
         title: document.title,
-        currentTime: Number(media.currentTime || 0)
+        currentTime: Number(media.currentTime || 0),
+        videoWidth: Number(media.videoWidth || 0),
+        videoHeight: Number(media.videoHeight || 0)
       }).catch(() => {});
       scan();
     }, 1200);
@@ -128,8 +130,6 @@
     return [...document.querySelectorAll("video, audio")].find(mediaIsPlaying) || null;
   }
 
-  // Resources may preload before playback. Keep collecting them internally,
-  // but the background will not expose them or show a badge until playback is confirmed.
   scan();
   setTimeout(scan, 1200);
   setTimeout(scan, 3500);

@@ -116,18 +116,20 @@ function getTabItems(tabId) {
   return MEDIA_BY_TAB.get(tabId);
 }
 function getTabState(tabId) {
-  if (!TAB_STATE.has(tabId)) TAB_STATE.set(tabId, { playbackConfirmed: false, playbackAt: 0, pageUrl: "" });
+  if (!TAB_STATE.has(tabId)) TAB_STATE.set(tabId, { playbackConfirmed: false, playbackAt: 0, pageUrl: "", playbackWidth: 0, playbackHeight: 0 });
   return TAB_STATE.get(tabId);
 }
 function resetTab(tabId, pageUrl = "") {
   MEDIA_BY_TAB.delete(tabId);
-  TAB_STATE.set(tabId, { playbackConfirmed: false, playbackAt: 0, pageUrl });
+  TAB_STATE.set(tabId, { playbackConfirmed: false, playbackAt: 0, pageUrl, playbackWidth: 0, playbackHeight: 0 });
 }
 function visibleItems(tabId) {
-  if (!getTabState(tabId).playbackConfirmed) return [];
+  const state = getTabState(tabId);
+  if (!state.playbackConfirmed) return [];
   const all = [...(MEDIA_BY_TAB.get(tabId)?.values() || [])]
     .filter((item) => item.type !== "segment")
-    .sort((a, b) => b.score - a.score || b.detectedAt - a.detectedAt);
+    .sort((a, b) => b.score - a.score || b.detectedAt - a.detectedAt)
+    .map((item) => ({ ...item, playbackWidth: state.playbackWidth || 0, playbackHeight: state.playbackHeight || 0 }));
   const clean = all.filter((item) => !item.likelyAd);
   return clean.length ? clean : all;
 }
@@ -214,7 +216,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const tabId = sender.tab?.id;
     if (Number.isInteger(tabId)) {
       const state = getTabState(tabId);
-      state.playbackConfirmed = true; state.playbackAt = Date.now(); state.pageUrl = message.pageUrl || state.pageUrl || "";
+      state.playbackConfirmed = true;
+      state.playbackAt = Date.now();
+      state.pageUrl = message.pageUrl || state.pageUrl || "";
+      state.playbackWidth = Number(message.videoWidth || 0);
+      state.playbackHeight = Number(message.videoHeight || 0);
       refreshBadge(tabId);
     }
     sendResponse({ ok: true }); return;
@@ -226,7 +232,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message?.type === "OMNIFETCH_GET_MEDIA") {
     const state = getTabState(message.tabId);
-    sendResponse({ ok: true, playbackConfirmed: Boolean(state.playbackConfirmed), items: visibleItems(message.tabId).slice(0, 60) }); return;
+    sendResponse({
+      ok: true,
+      playbackConfirmed: Boolean(state.playbackConfirmed),
+      playbackWidth: state.playbackWidth || 0,
+      playbackHeight: state.playbackHeight || 0,
+      items: visibleItems(message.tabId).slice(0, 60)
+    });
+    return;
   }
   if (message?.type === "OMNIFETCH_GET_REQUEST_CONTEXT") {
     sendResponse({ ok: true, headers: findRequestContext(message.url, message.tabId) }); return;

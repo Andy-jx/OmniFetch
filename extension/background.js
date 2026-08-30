@@ -1,4 +1,5 @@
 const MEDIA_BY_TAB = new Map();
+const TAB_STATE = new Map();
 
 const MEDIA_EXTENSIONS = [
   ".mp4", ".webm", ".m3u8", ".mpd", ".mov", ".m4v", ".ts", ".m4s", ".flv", ".mp3", ".m4a", ".aac"
@@ -121,7 +122,30 @@ function getTabItems(tabId) {
   return MEDIA_BY_TAB.get(tabId);
 }
 
+function getTabState(tabId) {
+  if (!TAB_STATE.has(tabId)) {
+    TAB_STATE.set(tabId, {
+      playbackConfirmed: false,
+      playbackAt: 0,
+      pageUrl: ""
+    });
+  }
+  return TAB_STATE.get(tabId);
+}
+
+function resetTab(tabId, pageUrl = "") {
+  MEDIA_BY_TAB.delete(tabId);
+  TAB_STATE.set(tabId, {
+    playbackConfirmed: false,
+    playbackAt: 0,
+    pageUrl: pageUrl || ""
+  });
+}
+
 function visibleItems(tabId) {
+  const state = getTabState(tabId);
+  if (!state.playbackConfirmed) return [];
+
   const all = [...(MEDIA_BY_TAB.get(tabId)?.values() || [])]
     .filter((item) => item.type !== "segment")
     .sort((a, b) => b.score - a.score || b.detectedAt - a.detectedAt);
@@ -145,6 +169,7 @@ function findRequestContext(url, tabId) {
 
 async function refreshBadge(tabId) {
   if (!Number.isInteger(tabId) || tabId < 0) return;
+  const state = getTabState(tabId);
   const items = visibleItems(tabId);
   const hasVideo = items.some((item) => ["mp4", "webm", "mov", "m4v", "flv", "video", "hls", "dash"].includes(item.type));
   const hasAudio = items.some((item) => ["mp3", "m4a", "aac", "audio"].includes(item.type));
@@ -154,7 +179,11 @@ async function refreshBadge(tabId) {
     await chrome.action.setBadgeText({ tabId, text: count ? String(count) : "" });
     await chrome.action.setTitle({
       tabId,
-      title: count ? `OmniFetch · 已识别 ${count} 类可下载媒体` : "OmniFetch · 等待媒体资源"
+      title: count
+        ? `OmniFetch · 已识别 ${count} 类可下载媒体`
+        : state.playbackConfirmed
+          ? "OmniFetch · 已播放，正在等待媒体请求"
+          : "OmniFetch · 播放视频 1–3 秒后开始识别"
     });
   } catch (_) {}
 }
@@ -254,9 +283,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
+  if (message?.type === "OMNIFETCH_PLAYBACK_STARTED") {
+    const tabId = sender.tab?.id;
+    if (Number.isInteger(tabId)) {
+      const state = getTabState(tabId);
+      state.playbackConfirmed = true;
+      state.playbackAt = Date.now();
+      state.pageUrl = message.pageUrl || state.pageUrl || "";
+      refreshBadge(tabId);
+    }
+    sendResponse({ ok: true });
+    return;
+  }
+
+  if (message?.type === "OMNIFETCH_RESET_TAB_CAPTURE") {
+    const tabId = sender.tab?.id;
+    if (Number.isInteger(tabId)) {
+      resetTab(tabId, message.pageUrl || "");
+      refreshBadge(tabId);
+    }
+    sendResponse({ ok: true });
+    return;
+  }
+
   if (message?.type === "OMNIFETCH_GET_MEDIA") {
+    const state = getTabState(message.tabId);
     const items = visibleItems(message.tabId);
-    sendResponse({ ok: true, items: items.slice(0, 50) });
+    sendResponse({
+      ok: true,
+      playbackConfirmed: Boolean(state.playbackConfirmed),
+      items: items.slice(0, 50)
+    });
     return;
   }
 
@@ -266,7 +323,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "OMNIFETCH_CLEAR_MEDIA") {
-    MEDIA_BY_TAB.delete(message.tabId);
+    resetTab(message.tabId);
     refreshBadge(message.tabId);
     sendResponse({ ok: true });
     return;
@@ -281,11 +338,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-chrome.tabs.onRemoved.addListener((tabId) => MEDIA_BY_TAB.delete(tabId));
+chrome.tabs.onRemoved.addListener((tabId) => {
+  MEDIA_BY_TAB.delete(tabId);
+  TAB_STATE.delete(tabId);
+});
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === "loading" && changeInfo.url) {
-    MEDIA_BY_TAB.delete(tabId);
+    resetTab(tabId, changeInfo.url);
     refreshBadge(tabId);
   }
 });

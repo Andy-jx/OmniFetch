@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "OmniFetch 全平台下载助手",
-  "version": "0.5.9",
-  "description": "网页媒体嗅探下载器：捕获 M3U8 后优先使用 8 并发原生分片下载，兼容部分 FFmpeg 无法直接打开的 CDN 媒体分片；继续优先最高画质、显示真实 720P/1080P/2160P，并支持单独音频。",
+  "version": "0.5.10",
+  "description": "网页媒体嗅探下载器：M3U8 原生分片下载后重建本地 HLS 时间线，并校验最终视频时长，修复文件大小正常但只能播放几秒的问题；继续优先最高画质并支持单独音频。",
   "permissions": [
     "activeTab",
     "downloads",

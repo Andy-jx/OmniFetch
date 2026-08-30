@@ -47,11 +47,15 @@ function formatSpeed(value) {
   return `${Math.round(speed / 1024)} KB/s`;
 }
 
+function showEmpty(message) {
+  const empty = document.createElement("div");
+  empty.className = "empty";
+  empty.textContent = String(message || "");
+  formatListEl.replaceChildren(empty);
+}
+
 function qualityLabel(item) {
-  if (item.has_video) {
-    if (item.height) return `${item.height}P`;
-    return "视频";
-  }
+  if (item.has_video) return item.height ? `${item.height}P` : "视频";
   return "音频";
 }
 
@@ -124,10 +128,7 @@ function renderFormats(formats) {
   formatListEl.replaceChildren();
 
   if (!displayFormats.length) {
-    const empty = document.createElement("div");
-    empty.className = "empty";
-    empty.textContent = "没有拿到独立清晰度列表。仍可以点击“最高画质下载”，让下载器自动选择最佳可用格式。";
-    formatListEl.append(empty);
+    showEmpty("没有拿到独立清晰度列表。仍可以点击“最高画质下载”，让下载器自动选择最佳可用格式。");
     bestBtn.disabled = false;
     return;
   }
@@ -167,19 +168,19 @@ async function probe() {
   retryBtn.disabled = true;
   bestBtn.disabled = true;
   probeStatusEl.textContent = "正在分析";
-  formatListEl.innerHTML = '<div class="empty">正在读取媒体清晰度、码率和音视频轨信息…</div>';
   formatCountEl.textContent = "0";
+  showEmpty("正在读取媒体清晰度、码率和音视频轨信息…");
 
   if (!mediaUrl) {
     probeStatusEl.textContent = "缺少地址";
-    formatListEl.innerHTML = '<div class="empty">没有收到媒体地址，请回到视频页面重新捕获。</div>';
+    showEmpty("没有收到媒体地址，请回到视频页面重新捕获。");
     retryBtn.disabled = false;
     return;
   }
 
   if (!(await checkHelper())) {
     probeStatusEl.textContent = "助手未启动";
-    formatListEl.innerHTML = '<div class="empty">M3U8 / DASH 清晰度分析和合并需要本地助手。请双击 OmniFetch 文件夹中的 run-helper.bat，然后点击“重新分析”。</div>';
+    showEmpty("M3U8 / DASH 清晰度分析和合并需要本地助手。请双击 run-helper.bat，或先运行 install-autostart.bat 设置自动后台启动，然后点击“重新分析”。");
     retryBtn.disabled = false;
     return;
   }
@@ -205,7 +206,7 @@ async function probe() {
     renderFormats(data.formats || []);
   } catch (error) {
     probeStatusEl.textContent = "分析失败";
-    formatListEl.innerHTML = `<div class="empty">${String(error.message || error)}</div>`;
+    showEmpty(error.message || error);
     bestBtn.disabled = false;
   } finally {
     retryBtn.disabled = false;
@@ -214,7 +215,7 @@ async function probe() {
 
 async function startDownload(formatId = "") {
   if (!(await checkHelper())) {
-    setProgress(0, "无法开始下载", "请先双击 run-helper.bat 启动流媒体助手。" );
+    setProgress(0, "无法开始下载", "请先双击 run-helper.bat，或运行 install-autostart.bat 设置自动后台启动。");
     return;
   }
 
@@ -274,16 +275,14 @@ async function pollJob(jobId) {
       setProgress(Number(job.percent || 0), labels[job.status] || job.status || "下载中", pieces.join(" · ") || "处理中…");
     } catch (_) {}
   }
-  setProgress(0, "任务仍在运行", "下载时间较长，请保持本地助手运行。" );
+  setProgress(0, "任务仍在运行", "下载时间较长，请保持本地助手运行。");
 }
 
 bestBtn.addEventListener("click", () => {
   const best = displayFormats[0];
   startDownload(best?.format_id || "");
 });
-
 retryBtn.addEventListener("click", probe);
-
 copyBtn.addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText(mediaUrl);

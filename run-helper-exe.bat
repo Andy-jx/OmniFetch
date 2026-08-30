@@ -3,6 +3,7 @@ setlocal EnableExtensions
 chcp 65001 >nul
 cd /d "%~dp0"
 
+set "PATH=%~dp0;%PATH%"
 title OmniFetch Local Helper
 
 if not exist "OmniFetchHelper.exe" (
@@ -11,6 +12,11 @@ if not exist "OmniFetchHelper.exe" (
     echo.
     pause
     exit /b 1
+)
+
+if not exist "ffmpeg.exe" (
+    echo [提示] 当前便携包未发现 ffmpeg.exe，高画质音视频合并能力会受限。
+    echo.
 )
 
 OmniFetchHelper.exe

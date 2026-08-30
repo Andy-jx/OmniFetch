@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "OmniFetch 全平台下载助手",
-  "version": "0.5.3",
-  "description": "网页媒体嗅探下载器：主界面只保留最高画质视频和单独音频；自动隐藏 M4S/TS 分片，并拒绝 1KB 等异常伪视频后自动切换下载策略。",
+  "version": "0.5.4",
+  "description": "网页媒体嗅探下载器：主界面只保留最高画质视频和单独音频；自动隐藏 M4S/TS 分片，并为 HLS/DASH 复用浏览器真实请求头以提高受限流媒体下载成功率。",
   "permissions": [
     "activeTab",
     "downloads",

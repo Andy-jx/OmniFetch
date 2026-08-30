@@ -33,6 +33,7 @@ jobs:
           node --check extension/content.js
           node --check extension/popup.js
           node --check extension/stream.js
+          node --check extension/recorder.js
           Get-Content extension/manifest.json -Raw | ConvertFrom-Json | Out-Null
 
       - name: Build helper EXE

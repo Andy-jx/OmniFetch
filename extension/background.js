@@ -8,9 +8,17 @@ const AD_MARKERS = [
   "doubleclick", "googleads", "adservice", "/ads/", "/ad/", "preroll", "pre-roll", "vast", "vpaid", "tracking"
 ];
 
+function cleanPath(url) {
+  return String(url || "").toLowerCase().split("?")[0].split("#")[0];
+}
+
 function classifyMedia(url, contentType = "") {
-  const clean = String(url || "").toLowerCase().split("?")[0].split("#")[0];
+  const clean = cleanPath(url);
   const type = String(contentType || "").toLowerCase();
+
+  // Fragment extensions must win over generic video/mp4 response headers.
+  // Sites such as X return .m4s chunks with Content-Type: video/mp4.
+  if (clean.endsWith(".ts") || clean.endsWith(".m4s")) return "segment";
 
   if (type.startsWith("audio/")) {
     if (type.includes("mpeg") || clean.endsWith(".mp3")) return "mp3";
@@ -29,7 +37,6 @@ function classifyMedia(url, contentType = "") {
   if (clean.endsWith(".mp3")) return "mp3";
   if (clean.endsWith(".m4a")) return "m4a";
   if (clean.endsWith(".aac")) return "aac";
-  if (clean.endsWith(".ts") || clean.endsWith(".m4s")) return "segment";
   if (type.startsWith("video/")) return "video";
   return "media";
 }
@@ -85,7 +92,7 @@ function scoreMedia(item) {
   if ((item.contentLength || 0) > 50 * 1024 * 1024) score += 12;
   if ((item.contentLength || 0) > 0 && (item.contentLength || 0) < 160 * 1024) score -= 18;
   if (item.likelyAd) score -= 100;
-  if (item.type === "segment") score -= 80;
+  if (item.type === "segment") score -= 1000;
   return score;
 }
 
@@ -104,13 +111,16 @@ function visibleItems(tabId) {
 
 async function refreshBadge(tabId) {
   if (!Number.isInteger(tabId) || tabId < 0) return;
-  const count = visibleItems(tabId).length;
+  const items = visibleItems(tabId);
+  const hasVideo = items.some((item) => ["mp4", "webm", "mov", "m4v", "flv", "video", "hls", "dash"].includes(item.type));
+  const hasAudio = items.some((item) => ["mp3", "m4a", "aac", "audio"].includes(item.type));
+  const count = Number(hasVideo) + Number(hasAudio);
   try {
     await chrome.action.setBadgeBackgroundColor({ tabId, color: "#1677ff" });
-    await chrome.action.setBadgeText({ tabId, text: count ? String(Math.min(count, 99)) : "" });
+    await chrome.action.setBadgeText({ tabId, text: count ? String(count) : "" });
     await chrome.action.setTitle({
       tabId,
-      title: count ? `OmniFetch · 已捕获 ${count} 个可用媒体资源` : "OmniFetch · 等待媒体资源"
+      title: count ? `OmniFetch · 已识别 ${count} 类可下载媒体` : "OmniFetch · 等待媒体资源"
     });
   } catch (_) {}
 }

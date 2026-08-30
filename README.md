@@ -8,13 +8,14 @@ v0.4.0 已经完成一套更接近 FetchV 的主流程：
 
 1. **媒体嗅探优先**：后台持续监听页面真实媒体请求。
 2. **图标数字角标**：捕获到资源后，OmniFetch 图标直接显示数量。
-3. **自动过滤噪声**：过滤明显广告、跟踪资源和 TS/M4S 小分片，优先把真正视频排在前面。
+3. **自动过滤噪声**：降低明显广告、跟踪资源和 TS/M4S 小分片的优先级；如果页面只有这类资源，也不会完全隐藏，避免误杀真正视频。
 4. **静态视频直存**：MP4 / WebM / MOV / FLV / MP3 等直接交给浏览器保存，不需要本地助手。
 5. **HLS / DASH 清晰度页**：M3U8/HLS、DASH/MPD 会打开独立下载页，读取可用分辨率、码率、FPS、格式和音视频轨。
 6. **最高画质推荐**：清晰度页默认把最高分辨率排在第一位，也可以手动选 1080P / 720P / 480P 等可用格式。
 7. **8 路并发分片下载**：HLS / DASH 使用 yt-dlp 并发下载分片，然后调用 FFmpeg 自动合并。
-8. **自动补音频**：选到视频-only 格式时，会自动尝试匹配最佳音频轨并合并。
+8. **自动补音频**：选到 video-only 格式时，会自动尝试匹配最佳音频轨并合并。
 9. **页面解析兜底**：如果没有嗅探到媒体直链，最后才使用当前页面 URL + yt-dlp 尝试解析。
+10. **助手可自动启动**：Windows 便携包内提供一键自动启动脚本，设置一次后，后续登录 Windows 可在后台自动启动流媒体助手。
 
 默认下载目录：
 
@@ -64,13 +65,16 @@ Actions → Build Windows Package → Artifacts → OmniFetch-Windows
 OmniFetchHelper.exe
 ffmpeg.exe
 run-helper.bat
+install-autostart.bat
+uninstall-autostart.bat
+start-helper-hidden.vbs
 extension\
 README.md
 ```
 
 不需要安装 Python，也不需要另外安装 FFmpeg。
 
-## 安装
+## 安装浏览器扩展
 
 Chrome：
 
@@ -86,13 +90,38 @@ edge://extensions/
 
 开启开发者模式 → 加载已解压扩展 → 选择 `extension` 文件夹 → 固定 OmniFetch 到工具栏。
 
-普通 MP4 / WebM 可以直接保存；遇到 HLS/M3U8/DASH 或页面解析兜底时，先双击：
+## 推荐：只设置一次自动启动
+
+为了让使用体验更像普通浏览器下载扩展，可以在解压后的 OmniFetch 文件夹中双击：
+
+```text
+install-autostart.bat
+```
+
+它会：
+
+- 创建当前用户的 Windows 登录启动快捷方式；
+- 后台隐藏启动 `OmniFetchHelper.exe`；
+- 不需要管理员权限；
+- 不会修改浏览器配置。
+
+设置完成后，不要随意移动整个 OmniFetch 文件夹，否则启动快捷方式路径会失效。
+
+如果以后不想自动启动，双击：
+
+```text
+uninstall-autostart.bat
+```
+
+它只删除自动启动快捷方式，不删除程序、扩展或下载内容。
+
+如果不设置自动启动，也可以需要 HLS/DASH 时手动双击：
 
 ```text
 run-helper.bat
 ```
 
-保持助手窗口运行。
+普通 MP4 / WebM 等静态资源不需要助手。
 
 ## v0.4.0 新增接口
 
@@ -129,7 +158,6 @@ Content-Type: application/json
 - 下载任务暂停 / 取消 / 重试
 - 多视频页面缩略图和预览
 - 更好的重复媒体合并和广告过滤
-- 助手自动启动，进一步减少手动操作
 - HLS 直播按时间段保存
 
 ## 当前限制
@@ -157,8 +185,9 @@ OmniFetch/
 ├─ helper/
 │  ├─ server.py
 │  └─ requirements.txt
-├─ install-helper.bat
-├─ run-helper.bat
 ├─ run-helper-exe.bat
+├─ install-autostart.bat
+├─ uninstall-autostart.bat
+├─ start-helper-hidden.vbs
 └─ .github/workflows/build-windows.yml
 ```

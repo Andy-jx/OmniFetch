@@ -103,12 +103,7 @@
   }
 
   function mediaIsPlaying(media) {
-    return Boolean(
-      media &&
-      !media.paused &&
-      !media.ended &&
-      media.readyState >= 2
-    );
+    return Boolean(media && !media.paused && !media.ended && media.readyState >= 2);
   }
 
   function confirmPlayback(media) {
@@ -133,12 +128,16 @@
     return [...document.querySelectorAll("video, audio")].find(mediaIsPlaying) || null;
   }
 
-  // Preload capture is allowed internally, but the background keeps it hidden
-  // until playback has actually continued for about one second.
+  // Resources may preload before playback. Keep collecting them internally,
+  // but the background will not expose them or show a badge until playback is confirmed.
   scan();
   setTimeout(scan, 1200);
   setTimeout(scan, 3500);
   setTimeout(scan, 7000);
+  setTimeout(() => {
+    const playing = activePlayingMedia();
+    if (playing && !playbackConfirmed) confirmPlayback(playing);
+  }, 500);
 
   const observer = new MutationObserver(() => {
     clearTimeout(observer._timer);
@@ -177,17 +176,17 @@
       sent.clear();
       playbackConfirmed = false;
       playbackToken += 1;
+      const playing = activePlayingMedia();
 
       chrome.runtime.sendMessage({
         type: "OMNIFETCH_RESET_TAB_CAPTURE",
         pageUrl: location.href
+      }).then(() => {
+        if (playing) {
+          scan();
+          confirmPlayback(playing);
+        }
       }).catch(() => {});
-
-      const playing = activePlayingMedia();
-      if (playing) {
-        scan();
-        confirmPlayback(playing);
-      }
 
       sendResponse({
         ok: true,

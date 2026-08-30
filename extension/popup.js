@@ -21,6 +21,7 @@ const browserName = navigator.userAgent.includes("Edg/") ? "edge" : "chrome";
 
 const VIDEO_TYPES = new Set(["mp4", "webm", "mov", "m4v", "flv", "video", "hls", "dash"]);
 const AUDIO_TYPES = new Set(["mp3", "m4a", "aac", "audio"]);
+const STREAM_TYPES = new Set(["hls", "dash"]);
 
 function setStatus(text) {
   statusTextEl.textContent = text;
@@ -62,8 +63,12 @@ function bestByScore(items) {
   })[0] || null;
 }
 
+function bestStreamCandidate() {
+  return bestByScore(currentMediaItems.filter((item) => STREAM_TYPES.has(item.type)));
+}
+
 function bestVideoCandidate() {
-  return bestByScore(currentMediaItems.filter((item) => VIDEO_TYPES.has(item.type)));
+  return bestStreamCandidate() || bestByScore(currentMediaItems.filter((item) => VIDEO_TYPES.has(item.type)));
 }
 
 function bestAudioCandidate() {
@@ -73,7 +78,12 @@ function bestAudioCandidate() {
 function fallbackUrls() {
   const prioritized = [...currentMediaItems]
     .filter((item) => VIDEO_TYPES.has(item.type) || AUDIO_TYPES.has(item.type))
-    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+    .sort((a, b) => {
+      const aStream = STREAM_TYPES.has(a.type) ? 1 : 0;
+      const bStream = STREAM_TYPES.has(b.type) ? 1 : 0;
+      if (aStream !== bStream) return bStream - aStream;
+      return Number(b.score || 0) - Number(a.score || 0);
+    });
   return [...new Set(prioritized.map((item) => item.url).filter(Boolean))].slice(0, 10);
 }
 
@@ -166,6 +176,17 @@ async function helperDownload(payload, kind = "video") {
   return data;
 }
 
+async function openStreamPage(item) {
+  const params = new URLSearchParams({
+    url: item.url,
+    page: activeTab?.url || item.pageUrl || "",
+    title: activeTab?.title || item.title || "视频",
+    browser: browserName,
+    type: item.type || "stream"
+  });
+  await chrome.tabs.create({ url: `${chrome.runtime.getURL("stream.html")}?${params.toString()}` });
+}
+
 async function openRecorder() {
   if (!activeTab?.id || !Number.isInteger(activeTab.id)) throw new Error("没有可录制的目标标签页。");
   if (!validPageUrl()) throw new Error("当前页面不能使用录制兜底模式。");
@@ -184,34 +205,38 @@ async function getDetectedMedia() {
 
 function renderSummary() {
   const video = bestVideoCandidate();
+  const stream = bestStreamCandidate();
   const audio = bestAudioCandidate();
   const videoCount = currentMediaItems.filter((item) => VIDEO_TYPES.has(item.type)).length;
   const audioCount = currentMediaItems.filter((item) => AUDIO_TYPES.has(item.type)).length;
 
-  if (video) {
+  if (stream) {
+    videoHintEl.textContent = `${String(stream.type).toUpperCase()} 播放清单已捕获 · 点击后进入专用下载页，自动取最高画质`;
+  } else if (video) {
     const size = formatBytes(video.contentLength);
     const type = String(video.type || "video").toUpperCase();
-    videoHintEl.textContent = `${type}${size ? ` · ${size}` : ""} · 下载时以页面解析最高画质为主，抓取地址仅作兜底`;
+    videoHintEl.textContent = `${type}${size ? ` · ${size}` : ""} · 页面解析最高画质，捕获地址只作兜底`;
   } else {
-    videoHintEl.textContent = "未捕获到完整视频直链；仍会直接解析当前页面的最高画质";
+    videoHintEl.textContent = "未捕获到完整视频地址；仍会直接解析当前页面的最高画质";
   }
 
   if (audio) {
     const size = formatBytes(audio.contentLength);
     audioHintEl.textContent = `${String(audio.type || "audio").toUpperCase()}${size ? ` · ${size}` : ""} · 单独下载最佳音轨`;
   } else {
-    audioHintEl.textContent = "未看到独立音频直链；助手会从当前页面提取最佳音频";
+    audioHintEl.textContent = "未看到独立音频直链；助手会从当前页面或播放清单提取最佳音频";
   }
 
   const summary = [];
-  if (videoCount) summary.push(`视频候选 ${videoCount}`);
+  if (stream) summary.push(`播放清单 ${String(stream.type).toUpperCase()}`);
+  else if (videoCount) summary.push(`视频候选 ${videoCount}`);
   if (audioCount) summary.push(`音频候选 ${audioCount}`);
   captureSummaryEl.textContent = summary.length
     ? `${summary.join(" · ")}；M4S/TS 播放分片已隐藏。`
     : "暂未识别完整媒体；可先播放几秒后重新检测。";
 
   downloadVideoBtn.disabled = !validPageUrl() && !video;
-  downloadAudioBtn.disabled = !validPageUrl() && !audio;
+  downloadAudioBtn.disabled = !validPageUrl() && !audio && !stream;
 }
 
 async function rescan() {
@@ -225,7 +250,7 @@ async function rescan() {
     if (helperOnline && !versionAtLeast(helperVersion, REQUIRED_HELPER)) {
       setStatus(`检测到旧后台助手 v${helperVersion}，请先升级到 v0.5.3。`);
     } else {
-      setStatus(currentMediaItems.length ? "识别完成。主界面只保留最高画质视频和单独音频。" : "还没抓到完整媒体，可继续播放几秒再试。");
+      setStatus(currentMediaItems.length ? "识别完成。优先使用 M3U8/DASH 播放清单，而不是下载零散分片。" : "还没抓到完整媒体，可继续播放几秒再试。");
     }
   } finally {
     refreshBtn.disabled = false;
@@ -236,6 +261,12 @@ downloadVideoBtn.addEventListener("click", async () => {
   downloadVideoBtn.disabled = true;
   try {
     currentMediaItems = await getDetectedMedia();
+    const stream = bestStreamCandidate();
+    if (stream) {
+      await openStreamPage(stream);
+      setStatus("已打开流媒体专用下载页。它会解析播放清单并只保留最高画质视频与最佳音频。" );
+      return;
+    }
     if (!validPageUrl()) throw new Error("当前页面没有可解析的视频页面地址。");
     const result = await helperDownload({
       page_url: activeTab.url,
@@ -257,10 +288,11 @@ downloadAudioBtn.addEventListener("click", async () => {
   try {
     currentMediaItems = await getDetectedMedia();
     const audio = bestAudioCandidate();
-    if (!validPageUrl() && !audio?.url) throw new Error("当前页面没有可提取的音频。");
+    const stream = bestStreamCandidate();
+    if (!validPageUrl() && !audio?.url && !stream?.url) throw new Error("当前页面没有可提取的音频。");
     const result = await helperDownload({
       page_url: validPageUrl() ? activeTab.url : "",
-      media_url: audio?.url || "",
+      media_url: audio?.url || stream?.url || "",
       title: activeTab?.title || "",
       browser: browserName,
       fallback_media_urls: fallbackUrls(),

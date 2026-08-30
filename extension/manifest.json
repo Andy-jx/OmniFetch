@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "OmniFetch 全平台下载助手",
-  "version": "0.5.6",
-  "description": "网页媒体嗅探下载器：播放后识别，优先主播放清单并显示当前下载画质；增强抖音动态 CDN 视频捕获，保留最佳音频并隐藏 M4S/TS 分片。",
+  "version": "0.5.7",
+  "description": "网页媒体嗅探下载器：播放后识别，优先主播放清单；当 HLS 子播放清单不提供分辨率时，用本地 FFmpeg 探测真实画质并显示当前下载分辨率。",
   "permissions": [
     "activeTab",
     "downloads",

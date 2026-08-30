@@ -88,9 +88,11 @@ function getTabItems(tabId) {
 }
 
 function visibleItems(tabId) {
-  return [...(MEDIA_BY_TAB.get(tabId)?.values() || [])]
-    .filter((item) => item.type !== "segment" && !item.likelyAd)
+  const all = [...(MEDIA_BY_TAB.get(tabId)?.values() || [])]
+    .filter((item) => item.type !== "segment")
     .sort((a, b) => b.score - a.score || b.detectedAt - a.detectedAt);
+  const clean = all.filter((item) => !item.likelyAd);
+  return clean.length ? clean : all;
 }
 
 async function refreshBadge(tabId) {

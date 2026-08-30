@@ -7,18 +7,22 @@ const MEDIA_EXTENSIONS = [
   ".mpd",
   ".mov",
   ".m4v",
-  ".ts"
+  ".ts",
+  ".m4s"
 ];
 
-function classifyMedia(url) {
-  const clean = url.toLowerCase().split("?")[0].split("#")[0];
-  if (clean.endsWith(".m3u8")) return "hls";
-  if (clean.endsWith(".mpd")) return "dash";
-  if (clean.endsWith(".mp4")) return "mp4";
-  if (clean.endsWith(".webm")) return "webm";
+function classifyMedia(url, contentType = "") {
+  const clean = String(url || "").toLowerCase().split("?")[0].split("#")[0];
+  const type = String(contentType || "").toLowerCase();
+  if (type.includes("mpegurl") || clean.endsWith(".m3u8")) return "hls";
+  if (type.includes("dash+xml") || clean.endsWith(".mpd")) return "dash";
+  if (type.includes("video/mp4") || clean.endsWith(".mp4")) return "mp4";
+  if (type.includes("video/webm") || clean.endsWith(".webm")) return "webm";
   if (clean.endsWith(".mov")) return "mov";
   if (clean.endsWith(".m4v")) return "m4v";
-  if (clean.endsWith(".ts")) return "segment";
+  if (clean.endsWith(".ts") || clean.endsWith(".m4s")) return "segment";
+  if (type.startsWith("video/")) return "video";
+  if (type.startsWith("audio/")) return "audio";
   return "media";
 }
 
@@ -28,15 +32,40 @@ function looksLikeMedia(url) {
   return MEDIA_EXTENSIONS.some((ext) => lower.includes(ext));
 }
 
+function contentTypeFromHeaders(headers = []) {
+  const row = headers.find((header) => String(header.name || "").toLowerCase() === "content-type");
+  return String(row?.value || "").toLowerCase();
+}
+
+function contentLengthFromHeaders(headers = []) {
+  const row = headers.find((header) => String(header.name || "").toLowerCase() === "content-length");
+  const value = Number(row?.value || 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function isMediaContentType(value) {
+  const type = String(value || "").toLowerCase();
+  return (
+    type.startsWith("video/") ||
+    type.startsWith("audio/") ||
+    type.includes("application/vnd.apple.mpegurl") ||
+    type.includes("application/x-mpegurl") ||
+    type.includes("application/dash+xml")
+  );
+}
+
 function scoreMedia(item) {
   let score = 0;
-  if (item.type === "mp4" || item.type === "webm") score += 50;
-  if (item.type === "hls") score += 45;
-  if (item.source === "video-element") score += 30;
+  if (["mp4", "webm", "video"].includes(item.type)) score += 55;
+  if (item.type === "hls") score += 50;
+  if (item.type === "dash") score += 45;
+  if (item.source === "video-element") score += 35;
+  if (item.source === "response-header") score += 25;
   if (item.source === "network") score += 15;
-  if (item.url.includes("video.twimg.com")) score += 25;
-  if (item.url.includes("blob:")) score -= 100;
-  if (item.type === "segment") score -= 40;
+  if ((item.contentLength || 0) > 5 * 1024 * 1024) score += 20;
+  if ((item.contentLength || 0) > 50 * 1024 * 1024) score += 10;
+  if (item.url.includes("video.twimg.com")) score += 20;
+  if (item.type === "segment") score -= 50;
   return score;
 }
 
@@ -50,11 +79,14 @@ function addCandidate(tabId, candidate) {
   if (!/^https?:/i.test(candidate.url)) return;
 
   const items = getTabItems(tabId);
-  const type = candidate.type || classifyMedia(candidate.url);
   const existing = items.get(candidate.url);
+  const contentType = candidate.contentType || existing?.contentType || "";
+  const type = candidate.type || classifyMedia(candidate.url, contentType);
   const merged = {
     url: candidate.url,
     type,
+    contentType,
+    contentLength: candidate.contentLength || existing?.contentLength || 0,
     source: candidate.source || existing?.source || "unknown",
     title: candidate.title || existing?.title || "",
     pageUrl: candidate.pageUrl || existing?.pageUrl || "",
@@ -63,17 +95,17 @@ function addCandidate(tabId, candidate) {
   merged.score = scoreMedia(merged);
   items.set(candidate.url, merged);
 
-  // 防止长时间播放把分片请求堆满内存。
-  if (items.size > 120) {
+  if (items.size > 180) {
     const sorted = [...items.values()].sort((a, b) => b.score - a.score || b.detectedAt - a.detectedAt);
     items.clear();
-    for (const item of sorted.slice(0, 80)) items.set(item.url, item);
+    for (const item of sorted.slice(0, 100)) items.set(item.url, item);
   }
 }
 
 chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
-    if (details.tabId < 0 || !looksLikeMedia(details.url)) return;
+    if (details.tabId < 0) return;
+    if (!looksLikeMedia(details.url) && details.type !== "media") return;
     addCandidate(details.tabId, {
       url: details.url,
       type: classifyMedia(details.url),
@@ -81,6 +113,23 @@ chrome.webRequest.onBeforeRequest.addListener(
     });
   },
   { urls: ["<all_urls>"] }
+);
+
+chrome.webRequest.onHeadersReceived.addListener(
+  (details) => {
+    if (details.tabId < 0) return;
+    const contentType = contentTypeFromHeaders(details.responseHeaders || []);
+    if (!isMediaContentType(contentType) && !looksLikeMedia(details.url)) return;
+    addCandidate(details.tabId, {
+      url: details.url,
+      type: classifyMedia(details.url, contentType),
+      contentType,
+      contentLength: contentLengthFromHeaders(details.responseHeaders || []),
+      source: "response-header"
+    });
+  },
+  { urls: ["<all_urls>"] },
+  ["responseHeaders"]
 );
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -98,7 +147,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const items = [...(MEDIA_BY_TAB.get(tabId)?.values() || [])]
       .filter((item) => item.type !== "segment")
       .sort((a, b) => b.score - a.score || b.detectedAt - a.detectedAt);
-    sendResponse({ ok: true, items: items.slice(0, 30) });
+    sendResponse({ ok: true, items: items.slice(0, 40) });
     return;
   }
 

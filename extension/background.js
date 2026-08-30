@@ -11,6 +11,14 @@ const AD_MARKERS = [
 function classifyMedia(url, contentType = "") {
   const clean = String(url || "").toLowerCase().split("?")[0].split("#")[0];
   const type = String(contentType || "").toLowerCase();
+
+  if (type.startsWith("audio/")) {
+    if (type.includes("mpeg") || clean.endsWith(".mp3")) return "mp3";
+    if (type.includes("mp4") || clean.endsWith(".m4a") || clean.endsWith(".mp4")) return "m4a";
+    if (type.includes("aac") || clean.endsWith(".aac")) return "aac";
+    return "audio";
+  }
+
   if (type.includes("mpegurl") || clean.endsWith(".m3u8")) return "hls";
   if (type.includes("dash+xml") || clean.endsWith(".mpd")) return "dash";
   if (type.includes("video/mp4") || clean.endsWith(".mp4")) return "mp4";
@@ -18,12 +26,11 @@ function classifyMedia(url, contentType = "") {
   if (clean.endsWith(".flv")) return "flv";
   if (clean.endsWith(".mov")) return "mov";
   if (clean.endsWith(".m4v")) return "m4v";
-  if (type.includes("audio/mpeg") || clean.endsWith(".mp3")) return "mp3";
+  if (clean.endsWith(".mp3")) return "mp3";
   if (clean.endsWith(".m4a")) return "m4a";
   if (clean.endsWith(".aac")) return "aac";
   if (clean.endsWith(".ts") || clean.endsWith(".m4s")) return "segment";
   if (type.startsWith("video/")) return "video";
-  if (type.startsWith("audio/")) return "audio";
   return "media";
 }
 

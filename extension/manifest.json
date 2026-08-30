@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "OmniFetch 全平台下载助手",
+  "version": "0.1.0",
+  "description": "自动识别网页中的 MP4、WebM、M3U8/HLS 媒体资源，并支持下载到本地。",
+  "permissions": [
+    "activeTab",
+    "downloads",
+    "storage",
+    "tabs",
+    "webRequest"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "OmniFetch",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ]
+}

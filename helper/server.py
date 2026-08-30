@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import re
 import shutil
+import sys
 import threading
 import time
 import traceback
@@ -15,12 +17,13 @@ import yt_dlp
 
 HOST = "127.0.0.1"
 PORT = 17891
-VERSION = "0.2.0"
+VERSION = "0.4.0"
 DOWNLOAD_DIR = Path.home() / "Downloads" / "OmniFetch"
 TOOLS_DIR = Path(__file__).resolve().parent / "tools"
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
 ALLOWED_EXTENSION_ORIGINS = ("chrome-extension://", "edge-extension://")
+FORMAT_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,120}$")
 
 PLATFORM_RULES = (
     (("x.com", "twitter.com"), "X / Twitter"),
@@ -86,9 +89,14 @@ def detect_platform(value: str) -> str:
 
 
 def find_ffmpeg() -> str | None:
-    bundled = TOOLS_DIR / "ffmpeg.exe"
-    if bundled.exists():
-        return str(TOOLS_DIR)
+    candidates = [
+        TOOLS_DIR / "ffmpeg.exe",
+        Path(sys.executable).resolve().parent / "ffmpeg.exe",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate.parent)
+
     system_ffmpeg = shutil.which("ffmpeg")
     if system_ffmpeg:
         return str(Path(system_ffmpeg).parent)
@@ -110,7 +118,14 @@ def progress_hook(job_id: str):
         if status == "downloading":
             total = data.get("total_bytes") or data.get("total_bytes_estimate") or 0
             downloaded = data.get("downloaded_bytes") or 0
-            percent = round((downloaded / total) * 100, 1) if total else None
+            fragment_index = data.get("fragment_index") or 0
+            fragment_count = data.get("fragment_count") or 0
+            if total:
+                percent = round((downloaded / total) * 100, 1)
+            elif fragment_count:
+                percent = round((fragment_index / fragment_count) * 100, 1)
+            else:
+                percent = None
             update_job(
                 job_id,
                 status="downloading",
@@ -119,6 +134,8 @@ def progress_hook(job_id: str):
                 total_bytes=total or None,
                 speed=data.get("speed"),
                 eta=data.get("eta"),
+                fragment_index=fragment_index or None,
+                fragment_count=fragment_count or None,
                 filename=data.get("filename") or "",
             )
         elif status == "finished":
@@ -132,22 +149,16 @@ def progress_hook(job_id: str):
     return hook
 
 
-def base_ydl_options(job_id: str, page_url: str) -> dict:
-    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    ffmpeg_location = find_ffmpeg()
-
-    opts = {
-        "outtmpl": str(DOWNLOAD_DIR / "%(title).180B [%(id)s].%(ext)s"),
+def common_ydl_options(page_url: str) -> dict:
+    return {
         "noplaylist": True,
         "windowsfilenames": True,
         "quiet": True,
         "no_warnings": True,
-        "overwrites": False,
-        "continuedl": True,
         "retries": 5,
-        "fragment_retries": 5,
+        "fragment_retries": 8,
         "file_access_retries": 3,
-        "progress_hooks": [progress_hook(job_id)],
+        "concurrent_fragment_downloads": 8,
         "http_headers": {
             "Referer": page_url or "",
             "User-Agent": (
@@ -158,18 +169,43 @@ def base_ydl_options(job_id: str, page_url: str) -> dict:
         },
     }
 
+
+def base_ydl_options(job_id: str, page_url: str, format_id: str = "") -> dict:
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    ffmpeg_location = find_ffmpeg()
+    opts = common_ydl_options(page_url)
+    opts.update(
+        {
+            "outtmpl": str(DOWNLOAD_DIR / "%(title).180B [%(id)s].%(ext)s"),
+            "overwrites": False,
+            "continuedl": True,
+            "progress_hooks": [progress_hook(job_id)],
+        }
+    )
+
+    if format_id:
+        if not FORMAT_ID_RE.fullmatch(format_id):
+            raise ValueError("清晰度格式 ID 无效")
+        opts["format"] = f"{format_id}+bestaudio/{format_id}/best"
+    elif ffmpeg_location:
+        opts["format"] = "bv*+ba/b"
+    else:
+        opts["format"] = "b[ext=mp4]/b"
+
     if ffmpeg_location:
         opts.update(
             {
-                "format": "bv*+ba/b",
                 "merge_output_format": "mp4",
                 "ffmpeg_location": ffmpeg_location,
             }
         )
-    else:
-        opts["format"] = "b[ext=mp4]/b"
-
     return opts
+
+
+def clone_opts(opts: dict) -> dict:
+    cloned = dict(opts)
+    cloned["http_headers"] = dict(opts.get("http_headers") or {})
+    return cloned
 
 
 def make_attempts(
@@ -178,24 +214,24 @@ def make_attempts(
     media_url: str,
     fallback_urls: list[str],
     browser: str,
+    format_id: str,
 ) -> list[tuple[str, str, dict]]:
-    base_opts = base_ydl_options(job_id, page_url)
+    base_opts = base_ydl_options(job_id, page_url, format_id)
     browser_ok = browser in {"chrome", "edge", "firefox"}
     attempts: list[tuple[str, str, dict]] = []
 
     def add_target(label: str, target: str, use_cookies: bool) -> None:
         if not target:
             return
-        opts = dict(base_opts)
-        opts["http_headers"] = dict(base_opts.get("http_headers") or {})
+        opts = clone_opts(base_opts)
         if use_cookies and browser_ok:
             opts["cookiesfrombrowser"] = (browser,)
         attempts.append((label, target, opts))
 
     if media_url:
+        add_target("captured-media", media_url, False)
         if browser_ok:
             add_target("captured-media-cookies", media_url, True)
-        add_target("captured-media", media_url, False)
         return attempts
 
     if page_url:
@@ -208,9 +244,9 @@ def make_attempts(
         if url in seen:
             continue
         seen.add(url)
+        add_target(f"captured-fallback-{index}", url, False)
         if browser_ok:
             add_target(f"captured-fallback-{index}-cookies", url, True)
-        add_target(f"captured-fallback-{index}", url, False)
 
     return attempts
 
@@ -221,6 +257,7 @@ def run_download(job_id: str, payload: dict) -> None:
         media_url = safe_http_url(payload.get("media_url"))
         browser = str(payload.get("browser") or "").strip().lower()
         title_hint = str(payload.get("title") or "").strip()
+        format_id = str(payload.get("format_id") or "").strip()
 
         raw_fallbacks = payload.get("fallback_media_urls") or []
         if not isinstance(raw_fallbacks, list):
@@ -244,9 +281,11 @@ def run_download(job_id: str, payload: dict) -> None:
             platform=platform,
             target_url=media_url or page_url or fallback_urls[0],
             fallback_count=len(fallback_urls),
+            format_id=format_id or None,
+            concurrent_fragments=8,
         )
 
-        attempts = make_attempts(job_id, page_url, media_url, fallback_urls, browser)
+        attempts = make_attempts(job_id, page_url, media_url, fallback_urls, browser, format_id)
         if not attempts:
             raise ValueError("没有可用的下载策略")
 
@@ -321,6 +360,117 @@ def create_job(payload: dict) -> str:
     return job_id
 
 
+def format_summary(raw: dict) -> dict:
+    height = raw.get("height") or 0
+    width = raw.get("width") or 0
+    tbr = raw.get("tbr") or 0
+    filesize = raw.get("filesize") or raw.get("filesize_approx") or 0
+    vcodec = str(raw.get("vcodec") or "")
+    acodec = str(raw.get("acodec") or "")
+    return {
+        "format_id": str(raw.get("format_id") or ""),
+        "ext": str(raw.get("ext") or ""),
+        "height": int(height) if isinstance(height, (int, float)) else 0,
+        "width": int(width) if isinstance(width, (int, float)) else 0,
+        "fps": raw.get("fps"),
+        "tbr": round(float(tbr), 1) if isinstance(tbr, (int, float)) else 0,
+        "filesize": int(filesize) if isinstance(filesize, (int, float)) else 0,
+        "protocol": str(raw.get("protocol") or ""),
+        "format_note": str(raw.get("format_note") or raw.get("format") or ""),
+        "vcodec": vcodec,
+        "acodec": acodec,
+        "has_video": bool(vcodec and vcodec != "none"),
+        "has_audio": bool(acodec and acodec != "none"),
+    }
+
+
+def build_format_list(info: dict) -> list[dict]:
+    raw_formats = info.get("formats") or []
+    if not isinstance(raw_formats, list):
+        raw_formats = []
+
+    result: list[dict] = []
+    seen: set[str] = set()
+    for raw in raw_formats:
+        if not isinstance(raw, dict) or raw.get("has_drm"):
+            continue
+        item = format_summary(raw)
+        format_id = item["format_id"]
+        if not format_id or not FORMAT_ID_RE.fullmatch(format_id):
+            continue
+        if not item["has_video"] and not item["has_audio"]:
+            continue
+        if format_id in seen:
+            continue
+        seen.add(format_id)
+        result.append(item)
+
+    result.sort(
+        key=lambda item: (
+            1 if item["has_video"] else 0,
+            item["height"],
+            item["tbr"],
+            item["filesize"],
+        ),
+        reverse=True,
+    )
+    return result[:40]
+
+
+def probe_media(payload: dict) -> dict:
+    page_url = safe_http_url(payload.get("page_url"))
+    media_url = safe_http_url(payload.get("media_url"))
+    target = media_url or page_url
+    if not target:
+        raise ValueError("缺少待分析地址")
+
+    browser = str(payload.get("browser") or "").strip().lower()
+    browser_ok = browser in {"chrome", "edge", "firefox"}
+    base_opts = common_ydl_options(page_url)
+    base_opts.update({"skip_download": True, "cachedir": False})
+    if find_ffmpeg():
+        base_opts["ffmpeg_location"] = find_ffmpeg()
+
+    attempts: list[tuple[str, dict]] = []
+    if media_url:
+        attempts.append(("captured-media", clone_opts(base_opts)))
+        if browser_ok:
+            cookie_opts = clone_opts(base_opts)
+            cookie_opts["cookiesfrombrowser"] = (browser,)
+            attempts.append(("captured-media-cookies", cookie_opts))
+    else:
+        if browser_ok:
+            cookie_opts = clone_opts(base_opts)
+            cookie_opts["cookiesfrombrowser"] = (browser,)
+            attempts.append(("page-extractor-cookies", cookie_opts))
+        attempts.append(("page-extractor", clone_opts(base_opts)))
+
+    last_error: Exception | None = None
+    for mode, opts in attempts:
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(target, download=False) or {}
+            if info.get("_type") == "playlist":
+                entries = [entry for entry in (info.get("entries") or []) if isinstance(entry, dict)]
+                if entries:
+                    info = entries[0]
+            return {
+                "ok": True,
+                "version": VERSION,
+                "platform": detect_platform(page_url or target),
+                "strategy": mode,
+                "title": str(info.get("title") or payload.get("title") or "视频"),
+                "duration": info.get("duration"),
+                "thumbnail": str(info.get("thumbnail") or ""),
+                "is_live": bool(info.get("is_live")),
+                "formats": build_format_list(info),
+            }
+        except Exception as exc:
+            last_error = exc
+
+    raise ValueError(str(last_error or "无法分析这个媒体资源"))
+
+
 class OmniFetchHandler(BaseHTTPRequestHandler):
     server_version = f"OmniFetchHelper/{VERSION}"
 
@@ -351,6 +501,16 @@ class OmniFetchHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def read_json(self) -> dict:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0 or length > 1024 * 1024:
+            raise ValueError("请求内容无效")
+        raw = self.rfile.read(length)
+        payload = json.loads(raw.decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("请求格式错误")
+        return payload
+
     def do_OPTIONS(self) -> None:
         if not self._origin_allowed():
             self.send_json(403, {"ok": False, "error": "Origin not allowed"})
@@ -374,7 +534,8 @@ class OmniFetchHandler(BaseHTTPRequestHandler):
                     "version": VERSION,
                     "download_dir": str(DOWNLOAD_DIR),
                     "ffmpeg": bool(find_ffmpeg()),
-                    "strategy": "page extractor + captured media fallback",
+                    "strategy": "sniff first + quality probe + extractor fallback",
+                    "concurrent_fragments": 8,
                 },
             )
             return
@@ -387,7 +548,9 @@ class OmniFetchHandler(BaseHTTPRequestHandler):
                     "version": VERSION,
                     "known_platforms": [name for _, name in PLATFORM_RULES],
                     "generic_capture": True,
-                    "formats": ["MP4", "WebM", "M3U8/HLS", "DASH/MPD", "MOV", "M4V"],
+                    "quality_probe": True,
+                    "concurrent_fragments": 8,
+                    "formats": ["MP4", "WebM", "M3U8/HLS", "DASH/MPD", "MOV", "M4V", "FLV", "MP3", "M4A"],
                 },
             )
             return
@@ -416,24 +579,27 @@ class OmniFetchHandler(BaseHTTPRequestHandler):
             return
 
         path = urlparse(self.path).path
-        if path != "/download":
-            self.send_json(404, {"ok": False, "error": "Not Found"})
-            return
-
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-            if length <= 0 or length > 1024 * 1024:
-                raise ValueError("请求内容无效")
-            raw = self.rfile.read(length)
-            payload = json.loads(raw.decode("utf-8"))
-            if not isinstance(payload, dict):
-                raise ValueError("请求格式错误")
+            payload = self.read_json()
+
+            if path == "/probe":
+                result = probe_media(payload)
+                self.send_json(200, result)
+                return
+
+            if path != "/download":
+                self.send_json(404, {"ok": False, "error": "Not Found"})
+                return
 
             page_url = safe_http_url(payload.get("page_url"))
             media_url = safe_http_url(payload.get("media_url"))
             raw_fallbacks = payload.get("fallback_media_urls") or []
             if not isinstance(raw_fallbacks, list):
                 raise ValueError("fallback_media_urls 格式错误")
+
+            format_id = str(payload.get("format_id") or "").strip()
+            if format_id and not FORMAT_ID_RE.fullmatch(format_id):
+                raise ValueError("清晰度格式 ID 无效")
 
             fallback_urls: list[str] = []
             for raw_url in raw_fallbacks[:12]:
@@ -450,6 +616,7 @@ class OmniFetchHandler(BaseHTTPRequestHandler):
             payload["page_url"] = page_url
             payload["media_url"] = media_url
             payload["fallback_media_urls"] = fallback_urls
+            payload["format_id"] = format_id
             job_id = create_job(payload)
             self.send_json(
                 202,
@@ -471,14 +638,15 @@ class OmniFetchHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    print("=" * 62)
+    print("=" * 66)
     print(f"OmniFetch Local Helper v{VERSION}")
     print(f"Listening : http://{HOST}:{PORT}")
     print(f"Downloads : {DOWNLOAD_DIR}")
     print(f"FFmpeg    : {'available' if find_ffmpeg() else 'not found (single-file fallback)'}")
-    print("Mode      : multi-platform extractor + captured media fallback")
+    print("Fragments : up to 8 concurrent HLS/DASH fragments")
+    print("Mode      : sniff first + quality probe + extractor fallback")
     print("Press Ctrl+C to stop.")
-    print("=" * 62)
+    print("=" * 66)
 
     server = ThreadingHTTPServer((HOST, PORT), OmniFetchHandler)
     try:

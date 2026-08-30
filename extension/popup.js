@@ -15,6 +15,8 @@ let currentMediaItems = [];
 const browserName = navigator.userAgent.includes("Edg/") ? "edge" : "chrome";
 
 const DIRECT_TYPES = new Set(["mp4", "webm", "mov", "m4v", "flv", "mp3", "m4a", "aac", "video", "audio"]);
+const VIDEO_DIRECT_TYPES = new Set(["mp4", "webm", "mov", "m4v", "flv", "video"]);
+const AUDIO_TYPES = new Set(["mp3", "m4a", "aac", "audio"]);
 const STREAM_TYPES = new Set(["hls", "dash"]);
 
 function setStatus(text) {
@@ -49,6 +51,10 @@ function sourceLabel(item) {
     meta: "页面信息"
   };
   return labels[item.source] || "已捕获";
+}
+
+function hasSeparateAudioTrack() {
+  return currentMediaItems.some((item) => AUDIO_TYPES.has(item.type));
 }
 
 async function getActiveTab() {
@@ -109,7 +115,7 @@ async function pollJob(jobId) {
 async function helperDownload(payload) {
   if (!helperOnline) await checkHelper();
   if (!helperOnline) {
-    throw new Error("这个资源需要流媒体助手。请先双击 run-helper.bat；普通 MP4/WebM 可直接保存。");
+    throw new Error("这个资源需要流媒体助手。请先双击 run-helper.bat；也可以先运行 install-autostart.bat 设置一次自动后台启动。");
   }
 
   const res = await fetch(`${HELPER_BASE}/download`, {
@@ -189,7 +195,13 @@ function createMediaCard(item, index) {
 
   const downloadBtn = document.createElement("button");
   downloadBtn.className = "small-btn primary";
-  downloadBtn.textContent = STREAM_TYPES.has(item.type) ? "清晰度 / 下载" : (DIRECT_TYPES.has(item.type) ? "保存" : "下载");
+  if (STREAM_TYPES.has(item.type)) {
+    downloadBtn.textContent = "清晰度 / 下载";
+  } else if (VIDEO_DIRECT_TYPES.has(item.type) && hasSeparateAudioTrack()) {
+    downloadBtn.textContent = "保存此视频轨";
+  } else {
+    downloadBtn.textContent = DIRECT_TYPES.has(item.type) ? "保存" : "下载";
+  }
   downloadBtn.addEventListener("click", async () => {
     downloadBtn.disabled = true;
     try {
@@ -244,7 +256,11 @@ async function renderMedia() {
   }
 
   currentMediaItems.forEach((item, index) => mediaListEl.append(createMediaCard(item, index)));
-  setStatus(`已捕获 ${currentMediaItems.length} 个可用资源；广告和小分片已自动过滤。`);
+  if (hasSeparateAudioTrack() && currentMediaItems.some((item) => VIDEO_DIRECT_TYPES.has(item.type))) {
+    setStatus(`已捕获 ${currentMediaItems.length} 个资源，并检测到分离的音频轨；顶部“下载当前视频”会优先尝试合并。`);
+  } else {
+    setStatus(`已捕获 ${currentMediaItems.length} 个可用资源；明显广告和小分片已降权。`);
+  }
 }
 
 async function rescan() {
@@ -264,7 +280,19 @@ downloadPageBtn.addEventListener("click", async () => {
   try {
     currentMediaItems = await getDetectedMedia();
     if (currentMediaItems.length) {
-      await downloadItem(currentMediaItems[0]);
+      const top = currentMediaItems[0];
+      const splitTracks = VIDEO_DIRECT_TYPES.has(top.type) && hasSeparateAudioTrack();
+      if (splitTracks && activeTab?.url && /^https?:/i.test(activeTab.url)) {
+        const result = await helperDownload({
+          page_url: activeTab.url,
+          title: activeTab.title || "",
+          browser: browserName,
+          fallback_media_urls: currentMediaItems.slice(0, 10).map((item) => item.url)
+        });
+        setStatus(`检测到分离音视频，已创建自动合并任务：${result.job_id}`);
+        return;
+      }
+      await downloadItem(top);
       return;
     }
 

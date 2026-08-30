@@ -45,8 +45,8 @@ h1 { margin: 0; font-size: 20px; letter-spacing: .2px; }
 
 .primary-actions {
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 7px;
   margin-top: 16px;
 }
 
@@ -55,12 +55,16 @@ h1 { margin: 0; font-size: 20px; letter-spacing: .2px; }
   border-radius: 8px;
   background: #21262d;
   color: #e6edf3;
-  padding: 9px 12px;
+  padding: 9px 10px;
   cursor: pointer;
+  white-space: nowrap;
+  font-size: 12px;
 }
 .btn:hover { background: #30363d; }
 .btn.primary { border-color: #1f6feb; background: #1f6feb; font-weight: 600; }
 .btn.primary:hover { background: #388bfd; }
+.btn.warning { border-color: #9e6a03; color: #e3b341; }
+.btn.warning:hover { background: #2d2206; }
 .btn:disabled { opacity: .5; cursor: default; }
 
 .status-row {

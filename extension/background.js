@@ -4,6 +4,10 @@ const MEDIA_EXTENSIONS = [
   ".mp4", ".webm", ".m3u8", ".mpd", ".mov", ".m4v", ".ts", ".m4s", ".flv", ".mp3", ".m4a", ".aac"
 ];
 
+const AD_MARKERS = [
+  "doubleclick", "googleads", "adservice", "/ads/", "/ad/", "preroll", "pre-roll", "vast", "vpaid", "tracking"
+];
+
 function classifyMedia(url, contentType = "") {
   const clean = String(url || "").toLowerCase().split("?")[0].split("#")[0];
   const type = String(contentType || "").toLowerCase();
@@ -29,14 +33,23 @@ function looksLikeMedia(url) {
   return MEDIA_EXTENSIONS.some((ext) => lower.includes(ext));
 }
 
+function looksLikeAd(url) {
+  const lower = String(url || "").toLowerCase();
+  return AD_MARKERS.some((marker) => lower.includes(marker));
+}
+
+function headerValue(headers = [], name) {
+  const target = String(name || "").toLowerCase();
+  const row = headers.find((header) => String(header.name || "").toLowerCase() === target);
+  return String(row?.value || "");
+}
+
 function contentTypeFromHeaders(headers = []) {
-  const row = headers.find((header) => String(header.name || "").toLowerCase() === "content-type");
-  return String(row?.value || "").toLowerCase();
+  return headerValue(headers, "content-type").toLowerCase();
 }
 
 function contentLengthFromHeaders(headers = []) {
-  const row = headers.find((header) => String(header.name || "").toLowerCase() === "content-length");
-  const value = Number(row?.value || 0);
+  const value = Number(headerValue(headers, "content-length") || 0);
   return Number.isFinite(value) ? value : 0;
 }
 
@@ -56,12 +69,15 @@ function scoreMedia(item) {
   if (["mp4", "webm", "video", "flv"].includes(item.type)) score += 60;
   if (item.type === "hls") score += 58;
   if (item.type === "dash") score += 52;
-  if (["mp3", "m4a", "aac", "audio"].includes(item.type)) score += 35;
-  if (item.source === "video-element") score += 35;
+  if (["mp3", "m4a", "aac", "audio"].includes(item.type)) score += 32;
+  if (item.source === "video-element") score += 38;
   if (item.source === "response-header") score += 25;
   if (item.source === "network") score += 15;
+  if (item.source === "performance") score += 12;
   if ((item.contentLength || 0) > 5 * 1024 * 1024) score += 20;
-  if ((item.contentLength || 0) > 50 * 1024 * 1024) score += 10;
+  if ((item.contentLength || 0) > 50 * 1024 * 1024) score += 12;
+  if ((item.contentLength || 0) > 0 && (item.contentLength || 0) < 160 * 1024) score -= 18;
+  if (item.likelyAd) score -= 100;
   if (item.type === "segment") score -= 80;
   return score;
 }
@@ -73,7 +89,7 @@ function getTabItems(tabId) {
 
 function visibleItems(tabId) {
   return [...(MEDIA_BY_TAB.get(tabId)?.values() || [])]
-    .filter((item) => item.type !== "segment")
+    .filter((item) => item.type !== "segment" && !item.likelyAd)
     .sort((a, b) => b.score - a.score || b.detectedAt - a.detectedAt);
 }
 
@@ -83,7 +99,10 @@ async function refreshBadge(tabId) {
   try {
     await chrome.action.setBadgeBackgroundColor({ tabId, color: "#1677ff" });
     await chrome.action.setBadgeText({ tabId, text: count ? String(Math.min(count, 99)) : "" });
-    await chrome.action.setTitle({ tabId, title: count ? `OmniFetch · 已捕获 ${count} 个媒体资源` : "OmniFetch · 等待媒体资源" });
+    await chrome.action.setTitle({
+      tabId,
+      title: count ? `OmniFetch · 已捕获 ${count} 个可用媒体资源` : "OmniFetch · 等待媒体资源"
+    });
   } catch (_) {}
 }
 
@@ -100,18 +119,21 @@ function addCandidate(tabId, candidate) {
     type,
     contentType,
     contentLength: candidate.contentLength || existing?.contentLength || 0,
+    contentDisposition: candidate.contentDisposition || existing?.contentDisposition || "",
     source: candidate.source || existing?.source || "unknown",
     title: candidate.title || existing?.title || "",
     pageUrl: candidate.pageUrl || existing?.pageUrl || "",
+    initiator: candidate.initiator || existing?.initiator || "",
+    likelyAd: looksLikeAd(candidate.url),
     detectedAt: Date.now()
   };
   merged.score = scoreMedia(merged);
   items.set(candidate.url, merged);
 
-  if (items.size > 180) {
+  if (items.size > 220) {
     const sorted = [...items.values()].sort((a, b) => b.score - a.score || b.detectedAt - a.detectedAt);
     items.clear();
-    for (const item of sorted.slice(0, 100)) items.set(item.url, item);
+    for (const item of sorted.slice(0, 120)) items.set(item.url, item);
   }
   refreshBadge(tabId);
 }
@@ -123,7 +145,8 @@ chrome.webRequest.onBeforeRequest.addListener(
     addCandidate(details.tabId, {
       url: details.url,
       type: classifyMedia(details.url),
-      source: "network"
+      source: "network",
+      initiator: details.initiator || ""
     });
   },
   { urls: ["<all_urls>"] }
@@ -132,14 +155,17 @@ chrome.webRequest.onBeforeRequest.addListener(
 chrome.webRequest.onHeadersReceived.addListener(
   (details) => {
     if (details.tabId < 0) return;
-    const contentType = contentTypeFromHeaders(details.responseHeaders || []);
+    const headers = details.responseHeaders || [];
+    const contentType = contentTypeFromHeaders(headers);
     if (!isMediaContentType(contentType) && !looksLikeMedia(details.url)) return;
     addCandidate(details.tabId, {
       url: details.url,
       type: classifyMedia(details.url, contentType),
       contentType,
-      contentLength: contentLengthFromHeaders(details.responseHeaders || []),
-      source: "response-header"
+      contentLength: contentLengthFromHeaders(headers),
+      contentDisposition: headerValue(headers, "content-disposition"),
+      source: "response-header",
+      initiator: details.initiator || ""
     });
   },
   { urls: ["<all_urls>"] },
@@ -156,7 +182,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "OMNIFETCH_GET_MEDIA") {
     const items = visibleItems(message.tabId);
-    sendResponse({ ok: true, items: items.slice(0, 40) });
+    sendResponse({ ok: true, items: items.slice(0, 50) });
     return;
   }
 

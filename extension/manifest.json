@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "OmniFetch 全平台下载助手",
-  "version": "0.1.0",
-  "description": "自动识别网页中的 MP4、WebM、M3U8/HLS 媒体资源，并支持下载到本地。",
+  "version": "0.2.0",
+  "description": "智能解析网页视频，并在解析失败时自动回退到浏览器捕获的 MP4、WebM、M3U8/HLS、DASH 等媒体流。",
   "permissions": [
     "activeTab",
     "downloads",

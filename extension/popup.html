@@ -13,11 +13,14 @@
         <h1>OmniFetch</h1>
         <p id="pageTitle" class="muted">正在读取当前页面…</p>
       </div>
-      <span id="helperBadge" class="badge">助手检测中</span>
+      <div class="badge-stack">
+        <span id="platformBadge" class="badge">通用网页</span>
+        <span id="helperBadge" class="badge">助手检测中</span>
+      </div>
     </header>
 
     <section class="primary-actions">
-      <button id="downloadPage" class="btn primary">下载当前页面视频</button>
+      <button id="downloadPage" class="btn primary">智能下载当前视频</button>
       <button id="refresh" class="btn">重新检测</button>
     </section>
 
@@ -29,7 +32,7 @@
     <section id="mediaList" class="media-list"></section>
 
     <footer>
-      <span>仅处理你有权保存或平台允许下载的内容。</span>
+      <span>优先解析当前页面，失败后自动尝试浏览器捕获到的媒体流。仅处理你有权保存或平台允许下载的内容。</span>
     </footer>
   </main>
   <script src="popup.js"></script>

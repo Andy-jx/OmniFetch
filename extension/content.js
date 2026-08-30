@@ -1,5 +1,7 @@
 (() => {
   const sent = new Set();
+  let playbackToken = 0;
+  let playbackConfirmed = false;
 
   function classify(url) {
     const clean = String(url || "").toLowerCase().split("?")[0].split("#")[0];
@@ -30,9 +32,8 @@
     for (const item of items) {
       const resolved = absoluteUrl(item.url);
       if (!validHttpUrl(resolved)) continue;
-      const key = resolved;
-      if (sent.has(key)) continue;
-      sent.add(key);
+      if (sent.has(resolved)) continue;
+      sent.add(resolved);
       fresh.push({
         ...item,
         url: resolved,
@@ -52,16 +53,10 @@
   function scanMediaElements() {
     const found = [];
     document.querySelectorAll("video, audio").forEach((media) => {
-      if (media.currentSrc) {
-        found.push({ url: media.currentSrc, source: "video-element" });
-      }
-      if (media.src) {
-        found.push({ url: media.src, source: "video-element" });
-      }
+      if (media.currentSrc) found.push({ url: media.currentSrc, source: "video-element" });
+      if (media.src) found.push({ url: media.src, source: "video-element" });
       media.querySelectorAll("source").forEach((source) => {
-        if (source.src) {
-          found.push({ url: source.src, source: "source-element" });
-        }
+        if (source.src) found.push({ url: source.src, source: "source-element" });
       });
     });
     emit(found);
@@ -107,6 +102,39 @@
     scanPerformanceEntries();
   }
 
+  function mediaIsPlaying(media) {
+    return Boolean(
+      media &&
+      !media.paused &&
+      !media.ended &&
+      media.readyState >= 2
+    );
+  }
+
+  function confirmPlayback(media) {
+    const token = ++playbackToken;
+    setTimeout(() => {
+      if (token !== playbackToken) return;
+      if (!mediaIsPlaying(media)) return;
+      if (Number(media.currentTime || 0) < 0.5) return;
+
+      playbackConfirmed = true;
+      chrome.runtime.sendMessage({
+        type: "OMNIFETCH_PLAYBACK_STARTED",
+        pageUrl: location.href,
+        title: document.title,
+        currentTime: Number(media.currentTime || 0)
+      }).catch(() => {});
+      scan();
+    }, 1200);
+  }
+
+  function activePlayingMedia() {
+    return [...document.querySelectorAll("video, audio")].find(mediaIsPlaying) || null;
+  }
+
+  // Preload capture is allowed internally, but the background keeps it hidden
+  // until playback has actually continued for about one second.
   scan();
   setTimeout(scan, 1200);
   setTimeout(scan, 3500);
@@ -126,15 +154,47 @@
     });
   }
 
-  window.addEventListener("play", scan, true);
+  window.addEventListener("play", (event) => {
+    const media = event.target;
+    if (media instanceof HTMLMediaElement) confirmPlayback(media);
+  }, true);
+
+  window.addEventListener("playing", (event) => {
+    const media = event.target;
+    if (media instanceof HTMLMediaElement && !playbackConfirmed) confirmPlayback(media);
+  }, true);
+
+  window.addEventListener("pause", () => {
+    playbackToken += 1;
+  }, true);
+
   window.addEventListener("loadedmetadata", scan, true);
   window.addEventListener("popstate", () => setTimeout(scan, 300));
   window.addEventListener("hashchange", () => setTimeout(scan, 300));
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "OMNIFETCH_RESCAN") {
-      scan();
-      sendResponse({ ok: true, title: document.title, pageUrl: location.href });
+      sent.clear();
+      playbackConfirmed = false;
+      playbackToken += 1;
+
+      chrome.runtime.sendMessage({
+        type: "OMNIFETCH_RESET_TAB_CAPTURE",
+        pageUrl: location.href
+      }).catch(() => {});
+
+      const playing = activePlayingMedia();
+      if (playing) {
+        scan();
+        confirmPlayback(playing);
+      }
+
+      sendResponse({
+        ok: true,
+        title: document.title,
+        pageUrl: location.href,
+        waitingForPlayback: !playing
+      });
     }
   });
 })();

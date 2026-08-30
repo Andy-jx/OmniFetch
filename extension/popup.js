@@ -1,5 +1,5 @@
 const HELPER_BASE = "http://127.0.0.1:17891";
-const REQUIRED_HELPER = [0, 5, 3];
+const REQUIRED_HELPER = [0, 5, 4];
 
 const pageTitleEl = document.getElementById("pageTitle");
 const helperBadgeEl = document.getElementById("helperBadge");
@@ -73,6 +73,10 @@ function bestVideoCandidate() {
 
 function bestAudioCandidate() {
   return bestByScore(currentMediaItems.filter((item) => AUDIO_TYPES.has(item.type)));
+}
+
+function requestHeadersFor(item) {
+  return item?.requestHeaders && typeof item.requestHeaders === "object" ? item.requestHeaders : {};
 }
 
 function fallbackUrls() {
@@ -160,9 +164,9 @@ async function helperDownload(payload, kind = "video") {
   const ready = await checkHelper();
   if (!ready) {
     if (helperOnline) {
-      throw new Error(`后台助手还是 v${helperVersion || "旧版"}。请运行 v0.5.3 的 install-autostart.bat，看到 Helper v0.5.3 后再下载。`);
+      throw new Error(`后台助手还是 v${helperVersion || "旧版"}。请运行 v0.5.4 的 install-autostart.bat，看到 Helper v0.5.4 后再下载。`);
     }
-    throw new Error("流媒体助手未启动。请运行 v0.5.3 的 install-autostart.bat 或 run-helper.bat。");
+    throw new Error("流媒体助手未启动。请运行 v0.5.4 的 install-autostart.bat 或 run-helper.bat。");
   }
 
   const res = await fetch(`${HELPER_BASE}/download`, {
@@ -248,9 +252,9 @@ async function rescan() {
     currentMediaItems = await getDetectedMedia();
     renderSummary();
     if (helperOnline && !versionAtLeast(helperVersion, REQUIRED_HELPER)) {
-      setStatus(`检测到旧后台助手 v${helperVersion}，请先升级到 v0.5.3。`);
+      setStatus(`检测到旧后台助手 v${helperVersion}，请先升级到 v0.5.4。`);
     } else {
-      setStatus(currentMediaItems.length ? "识别完成。优先使用 M3U8/DASH 播放清单，而不是下载零散分片。" : "还没抓到完整媒体，可继续播放几秒再试。");
+      setStatus(currentMediaItems.length ? "识别完成。优先使用 M3U8/DASH 播放清单，并复用浏览器实际请求环境。" : "还没抓到完整媒体，可继续播放几秒再试。");
     }
   } finally {
     refreshBtn.disabled = false;
@@ -264,15 +268,17 @@ downloadVideoBtn.addEventListener("click", async () => {
     const stream = bestStreamCandidate();
     if (stream) {
       await openStreamPage(stream);
-      setStatus("已打开流媒体专用下载页。它会解析播放清单并只保留最高画质视频与最佳音频。" );
+      setStatus("已打开流媒体专用下载页。它会携带浏览器请求头解析并下载播放清单。" );
       return;
     }
+    const video = bestVideoCandidate();
     if (!validPageUrl()) throw new Error("当前页面没有可解析的视频页面地址。");
     const result = await helperDownload({
       page_url: activeTab.url,
       title: activeTab.title || "",
       browser: browserName,
       fallback_media_urls: fallbackUrls(),
+      request_headers: requestHeadersFor(video),
       download_kind: "video"
     }, "video");
     setStatus(`最高画质视频任务已创建：${result.job_id}`);
@@ -289,13 +295,15 @@ downloadAudioBtn.addEventListener("click", async () => {
     currentMediaItems = await getDetectedMedia();
     const audio = bestAudioCandidate();
     const stream = bestStreamCandidate();
-    if (!validPageUrl() && !audio?.url && !stream?.url) throw new Error("当前页面没有可提取的音频。");
+    const source = audio || stream;
+    if (!validPageUrl() && !source?.url) throw new Error("当前页面没有可提取的音频。");
     const result = await helperDownload({
       page_url: validPageUrl() ? activeTab.url : "",
-      media_url: audio?.url || stream?.url || "",
+      media_url: source?.url || "",
       title: activeTab?.title || "",
       browser: browserName,
       fallback_media_urls: fallbackUrls(),
+      request_headers: requestHeadersFor(source),
       download_kind: "audio"
     }, "audio");
     setStatus(`最佳音频任务已创建：${result.job_id}`);

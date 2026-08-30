@@ -25,9 +25,10 @@
         <div><span class="label">状态</span><strong id="probeStatus">准备分析</strong></div>
       </div>
       <div class="top-actions">
-        <button id="bestBtn" class="btn primary" disabled>最高画质下载</button>
+        <button id="bestBtn" class="btn primary" disabled>下载最高画质视频</button>
+        <button id="audioBtn" class="btn" disabled>单独下载音频</button>
         <button id="retryBtn" class="btn">重新分析</button>
-        <button id="copyBtn" class="btn">复制媒体地址</button>
+        <button id="copyBtn" class="btn">复制播放清单地址</button>
       </div>
     </section>
 
@@ -43,13 +44,13 @@
     <section class="panel">
       <div class="section-head">
         <div>
-          <h2>可用清晰度</h2>
-          <p>视频轨缺少音频时，OmniFetch 会自动选择最佳音频并用 FFmpeg 合并。</p>
+          <h2>当前媒体</h2>
+          <p>只保留最高画质视频和最佳音频。M4S / TS 等播放分片不会单独显示或保存。</p>
         </div>
         <span id="formatCount" class="count">0</span>
       </div>
       <div id="formatList" class="format-list">
-        <div class="empty">正在读取 M3U8 / DASH / 页面格式信息…</div>
+        <div class="empty">正在解析 M3U8 / DASH 播放清单…</div>
       </div>
     </section>
 

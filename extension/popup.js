@@ -1,24 +1,27 @@
 const HELPER_BASE = "http://127.0.0.1:17891";
+const REQUIRED_AUDIO_HELPER = [0, 5, 2];
 
 const pageTitleEl = document.getElementById("pageTitle");
 const helperBadgeEl = document.getElementById("helperBadge");
 const statusTextEl = document.getElementById("statusText");
-const mediaListEl = document.getElementById("mediaList");
-const captureCountEl = document.getElementById("captureCount");
-const downloadPageBtn = document.getElementById("downloadPage");
+const captureSummaryEl = document.getElementById("captureSummary");
+const videoHintEl = document.getElementById("videoHint");
+const audioHintEl = document.getElementById("audioHint");
+const downloadVideoBtn = document.getElementById("downloadVideo");
+const downloadAudioBtn = document.getElementById("downloadAudio");
 const refreshBtn = document.getElementById("refresh");
 const recordModeBtn = document.getElementById("recordMode");
 const clearBtn = document.getElementById("clear");
 
 let activeTab = null;
 let helperOnline = false;
+let helperVersion = "";
 let currentMediaItems = [];
 const browserName = navigator.userAgent.includes("Edg/") ? "edge" : "chrome";
 
-const DIRECT_TYPES = new Set(["mp4", "webm", "mov", "m4v", "flv", "mp3", "m4a", "aac", "video", "audio"]);
-const VIDEO_DIRECT_TYPES = new Set(["mp4", "webm", "mov", "m4v", "flv", "video"]);
+const VIDEO_TYPES = new Set(["mp4", "webm", "mov", "m4v", "flv", "video", "hls", "dash"]);
 const AUDIO_TYPES = new Set(["mp3", "m4a", "aac", "audio"]);
-const STREAM_TYPES = new Set(["hls", "dash"]);
+const DIRECT_VIDEO_TYPES = new Set(["mp4", "webm", "mov", "m4v", "flv", "video"]);
 
 function setStatus(text) {
   statusTextEl.textContent = text;
@@ -28,10 +31,20 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function shortUrl(url) {
-  if (!url) return "";
-  if (url.length <= 108) return url;
-  return `${url.slice(0, 64)}…${url.slice(-34)}`;
+function parseVersion(value) {
+  return String(value || "")
+    .split(".")
+    .slice(0, 3)
+    .map((part) => Number.parseInt(part, 10) || 0);
+}
+
+function versionAtLeast(value, minimum) {
+  const current = parseVersion(value);
+  for (let index = 0; index < minimum.length; index += 1) {
+    if ((current[index] || 0) > minimum[index]) return true;
+    if ((current[index] || 0) < minimum[index]) return false;
+  }
+  return true;
 }
 
 function formatBytes(value) {
@@ -42,20 +55,31 @@ function formatBytes(value) {
   return `${Math.round(bytes / 1024)} KB`;
 }
 
-function sourceLabel(item) {
-  const labels = {
-    "video-element": "播放器",
-    "source-element": "播放器",
-    "response-header": "网络响应",
-    network: "网络请求",
-    performance: "网页资源",
-    meta: "页面信息"
-  };
-  return labels[item.source] || "已捕获";
+function bestByScore(items) {
+  return [...items].sort((a, b) => {
+    const scoreDiff = Number(b.score || 0) - Number(a.score || 0);
+    if (scoreDiff) return scoreDiff;
+    return Number(b.contentLength || 0) - Number(a.contentLength || 0);
+  })[0] || null;
 }
 
-function hasSeparateAudioTrack() {
-  return currentMediaItems.some((item) => AUDIO_TYPES.has(item.type));
+function bestVideoCandidate() {
+  return bestByScore(currentMediaItems.filter((item) => VIDEO_TYPES.has(item.type)));
+}
+
+function bestAudioCandidate() {
+  return bestByScore(currentMediaItems.filter((item) => AUDIO_TYPES.has(item.type)));
+}
+
+function fallbackUrls() {
+  const prioritized = [...currentMediaItems]
+    .filter((item) => VIDEO_TYPES.has(item.type) || AUDIO_TYPES.has(item.type))
+    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+  return [...new Set(prioritized.map((item) => item.url).filter(Boolean))].slice(0, 10);
+}
+
+function validPageUrl() {
+  return Boolean(activeTab?.url && /^https?:/i.test(activeTab.url));
 }
 
 async function getActiveTab() {
@@ -70,18 +94,21 @@ async function checkHelper() {
     const res = await fetch(`${HELPER_BASE}/health`, { signal: controller.signal });
     const data = await res.json().catch(() => ({}));
     helperOnline = res.ok && data.ok;
-    helperBadgeEl.textContent = helperOnline ? `流媒体助手 v${data.version || ""}` : "流媒体助手未启动";
+    helperVersion = helperOnline ? String(data.version || "") : "";
+    helperBadgeEl.textContent = helperOnline ? `流媒体助手 v${helperVersion || "?"}` : "流媒体助手未启动";
   } catch (_) {
     helperOnline = false;
+    helperVersion = "";
     helperBadgeEl.textContent = "流媒体助手未启动";
   } finally {
     clearTimeout(timer);
   }
   helperBadgeEl.className = `badge ${helperOnline ? "ok" : "bad"}`;
+  return helperOnline;
 }
 
-async function pollJob(jobId) {
-  for (let attempt = 0; attempt < 360; attempt += 1) {
+async function pollJob(jobId, kind) {
+  for (let attempt = 0; attempt < 720; attempt += 1) {
     await sleep(1000);
     try {
       const res = await fetch(`${HELPER_BASE}/jobs/${jobId}`);
@@ -89,7 +116,7 @@ async function pollJob(jobId) {
       if (!res.ok || !data.ok || !data.job) continue;
       const job = data.job;
       if (job.status === "completed") {
-        setStatus(`下载完成：${job.title || "视频"}`);
+        setStatus(`${kind === "audio" ? "音频" : "视频"}下载完成：${job.title || "文件"}`);
         return;
       }
       if (job.status === "failed") {
@@ -103,20 +130,23 @@ async function pollJob(jobId) {
       const labels = {
         queued: "等待中",
         starting: "准备下载",
-        resolving: "正在解析",
+        resolving: kind === "audio" ? "正在提取最佳音频" : "正在解析最高画质",
         retrying: "正在切换下载策略",
         downloading: "正在下载",
-        processing: "正在合并"
+        processing: kind === "audio" ? "正在生成音频文件" : "正在合并音视频"
       };
       setStatus(`${labels[job.status] || job.status}${percent}${fragment}`);
     } catch (_) {}
   }
 }
 
-async function helperDownload(payload) {
+async function helperDownload(payload, kind = "video") {
   if (!helperOnline) await checkHelper();
   if (!helperOnline) {
-    throw new Error("这个资源需要流媒体助手。请先双击 run-helper.bat；也可以先运行 install-autostart.bat 设置一次自动后台启动。");
+    throw new Error("流媒体助手未启动。请先运行新版 install-autostart.bat 或 run-helper.bat。");
+  }
+  if (kind === "audio" && !versionAtLeast(helperVersion, REQUIRED_AUDIO_HELPER)) {
+    throw new Error("当前后台助手版本太旧。请关闭旧助手并使用 v0.5.2 以上新版后再下载音频。");
   }
 
   const res = await fetch(`${HELPER_BASE}/download`, {
@@ -126,7 +156,7 @@ async function helperDownload(payload) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.ok) throw new Error(data.error || `本地助手返回 ${res.status}`);
-  pollJob(data.job_id);
+  pollJob(data.job_id, kind);
   return data;
 }
 
@@ -136,118 +166,14 @@ async function directDownload(url) {
   return result;
 }
 
-async function openStreamDetails(item) {
-  const params = new URLSearchParams({
-    url: item.url,
-    page: activeTab?.url || item.pageUrl || "",
-    title: activeTab?.title || item.title || "",
-    browser: browserName,
-    type: item.type || "stream"
-  });
-  await chrome.tabs.create({ url: `${chrome.runtime.getURL("stream.html")}?${params.toString()}` });
-}
-
 async function openRecorder() {
-  if (!activeTab?.id || !Number.isInteger(activeTab.id)) {
-    throw new Error("没有可录制的目标标签页。");
-  }
-  if (!/^https?:/i.test(activeTab.url || "")) {
-    throw new Error("当前页面不能使用录制兜底模式。");
-  }
+  if (!activeTab?.id || !Number.isInteger(activeTab.id)) throw new Error("没有可录制的目标标签页。");
+  if (!validPageUrl()) throw new Error("当前页面不能使用录制兜底模式。");
   const params = new URLSearchParams({
     tabId: String(activeTab.id),
     title: activeTab.title || "网页视频"
   });
   await chrome.tabs.create({ url: `${chrome.runtime.getURL("recorder.html")}?${params.toString()}` });
-}
-
-async function downloadItem(item) {
-  if (DIRECT_TYPES.has(item.type)) {
-    await directDownload(item.url);
-    setStatus("已交给浏览器保存。无需本地助手。");
-    return;
-  }
-
-  if (STREAM_TYPES.has(item.type)) {
-    await openStreamDetails(item);
-    setStatus("已打开清晰度与流媒体下载页。");
-    return;
-  }
-
-  const result = await helperDownload({
-    media_url: item.url,
-    page_url: activeTab?.url || item.pageUrl || "",
-    title: activeTab?.title || item.title || "",
-    browser: browserName
-  });
-  setStatus(`已创建下载任务：${result.job_id}`);
-}
-
-function createMediaCard(item, index) {
-  const card = document.createElement("article");
-  card.className = "media-card";
-
-  const head = document.createElement("div");
-  head.className = "media-head";
-
-  const type = document.createElement("span");
-  type.className = "media-type";
-  type.textContent = String(item.type || "media").toUpperCase();
-
-  const meta = document.createElement("span");
-  meta.className = "media-source";
-  const size = formatBytes(item.contentLength);
-  meta.textContent = `${sourceLabel(item)}${size ? ` · ${size}` : ""}`;
-  head.append(type, meta);
-
-  const url = document.createElement("div");
-  url.className = "media-url";
-  url.textContent = shortUrl(item.url);
-  url.title = item.url;
-
-  const actions = document.createElement("div");
-  actions.className = "media-actions";
-
-  const downloadBtn = document.createElement("button");
-  downloadBtn.className = "small-btn primary";
-  if (STREAM_TYPES.has(item.type)) {
-    downloadBtn.textContent = "清晰度 / 下载";
-  } else if (VIDEO_DIRECT_TYPES.has(item.type) && hasSeparateAudioTrack()) {
-    downloadBtn.textContent = "保存此视频轨";
-  } else {
-    downloadBtn.textContent = DIRECT_TYPES.has(item.type) ? "保存" : "下载";
-  }
-  downloadBtn.addEventListener("click", async () => {
-    downloadBtn.disabled = true;
-    try {
-      await downloadItem(item);
-    } catch (error) {
-      setStatus(error.message || "下载失败");
-    } finally {
-      downloadBtn.disabled = false;
-    }
-  });
-
-  const secondBtn = document.createElement("button");
-  secondBtn.className = "small-btn";
-  if (DIRECT_TYPES.has(item.type)) {
-    secondBtn.textContent = "打开";
-    secondBtn.addEventListener("click", () => chrome.tabs.create({ url: item.url }));
-  } else {
-    secondBtn.textContent = "复制地址";
-    secondBtn.addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(item.url);
-        setStatus("媒体地址已复制。");
-      } catch (_) {
-        setStatus("复制失败。");
-      }
-    });
-  }
-
-  actions.append(downloadBtn, secondBtn);
-  card.append(head, url, actions);
-  return card;
 }
 
 async function getDetectedMedia() {
@@ -256,26 +182,36 @@ async function getDetectedMedia() {
   return response?.items || [];
 }
 
-async function renderMedia() {
-  currentMediaItems = await getDetectedMedia();
-  captureCountEl.textContent = String(currentMediaItems.length);
-  mediaListEl.replaceChildren();
+function renderSummary() {
+  const video = bestVideoCandidate();
+  const audio = bestAudioCandidate();
+  const videoCount = currentMediaItems.filter((item) => VIDEO_TYPES.has(item.type)).length;
+  const audioCount = currentMediaItems.filter((item) => AUDIO_TYPES.has(item.type)).length;
 
-  if (!currentMediaItems.length) {
-    const empty = document.createElement("div");
-    empty.className = "empty";
-    empty.textContent = "还没有捕获到媒体。先播放视频 2–5 秒；如果仍然是 0，可以使用上方“录制兜底”。";
-    mediaListEl.append(empty);
-    setStatus("等待网页产生媒体请求…");
-    return;
-  }
-
-  currentMediaItems.forEach((item, index) => mediaListEl.append(createMediaCard(item, index)));
-  if (hasSeparateAudioTrack() && currentMediaItems.some((item) => VIDEO_DIRECT_TYPES.has(item.type))) {
-    setStatus(`已捕获 ${currentMediaItems.length} 个资源，并检测到分离的音频轨；顶部“下载当前视频”会优先尝试合并。`);
+  if (video) {
+    const size = formatBytes(video.contentLength);
+    const type = String(video.type || "video").toUpperCase();
+    videoHintEl.textContent = `${type}${size ? ` · ${size}` : ""} · 下载时自动优先最高画质并合并最佳音频`;
   } else {
-    setStatus(`已捕获 ${currentMediaItems.length} 个可用资源；明显广告和小分片已降权。`);
+    videoHintEl.textContent = "未捕获到完整视频直链；仍会尝试直接解析当前页面的最高画质";
   }
+
+  if (audio) {
+    const size = formatBytes(audio.contentLength);
+    audioHintEl.textContent = `${String(audio.type || "audio").toUpperCase()}${size ? ` · ${size}` : ""} · 下载最佳音轨`;
+  } else {
+    audioHintEl.textContent = "未看到独立音频直链；新版助手会从当前页面提取最佳音频";
+  }
+
+  const summary = [];
+  if (videoCount) summary.push(`视频候选 ${videoCount}`);
+  if (audioCount) summary.push(`音频候选 ${audioCount}`);
+  captureSummaryEl.textContent = summary.length
+    ? `${summary.join(" · ")}；M4S/TS 播放分片不再显示。`
+    : "暂未识别完整媒体；可先播放几秒后重新检测。";
+
+  downloadVideoBtn.disabled = !validPageUrl() && !video;
+  downloadAudioBtn.disabled = !validPageUrl() && !audio;
 }
 
 async function rescan() {
@@ -284,47 +220,76 @@ async function rescan() {
   try {
     await chrome.tabs.sendMessage(activeTab.id, { type: "OMNIFETCH_RESCAN" }).catch(() => null);
     await sleep(320);
-    await renderMedia();
+    currentMediaItems = await getDetectedMedia();
+    renderSummary();
+    setStatus(currentMediaItems.length ? "识别完成。只保留最高画质视频和单独音频两个下载入口。" : "还没抓到完整媒体，可继续播放几秒再试。" );
   } finally {
     refreshBtn.disabled = false;
   }
 }
 
-downloadPageBtn.addEventListener("click", async () => {
-  downloadPageBtn.disabled = true;
+downloadVideoBtn.addEventListener("click", async () => {
+  downloadVideoBtn.disabled = true;
   try {
     currentMediaItems = await getDetectedMedia();
-    if (currentMediaItems.length) {
-      const top = currentMediaItems[0];
-      const splitTracks = VIDEO_DIRECT_TYPES.has(top.type) && hasSeparateAudioTrack();
-      if (splitTracks && activeTab?.url && /^https?:/i.test(activeTab.url)) {
-        const result = await helperDownload({
-          page_url: activeTab.url,
-          title: activeTab.title || "",
-          browser: browserName,
-          fallback_media_urls: currentMediaItems.slice(0, 10).map((item) => item.url)
-        });
-        setStatus(`检测到分离音视频，已创建自动合并任务：${result.job_id}`);
-        return;
-      }
-      await downloadItem(top);
+    const video = bestVideoCandidate();
+
+    if (validPageUrl()) {
+      const result = await helperDownload({
+        page_url: activeTab.url,
+        title: activeTab.title || "",
+        browser: browserName,
+        fallback_media_urls: fallbackUrls(),
+        download_kind: "video"
+      }, "video");
+      setStatus(`最高画质视频任务已创建：${result.job_id}`);
       return;
     }
 
-    if (!activeTab?.url || !/^https?:/i.test(activeTab.url)) {
-      throw new Error("当前页面没有可下载媒体。");
+    if (video && DIRECT_VIDEO_TYPES.has(video.type)) {
+      await directDownload(video.url);
+      setStatus("已保存当前识别到的最高优先级视频文件。");
+      return;
     }
 
-    const result = await helperDownload({
-      page_url: activeTab.url,
-      title: activeTab.title || "",
-      browser: browserName
-    });
-    setStatus(`没有嗅探到媒体直链，已改用页面解析：${result.job_id}`);
+    throw new Error("当前页面没有可下载的视频。");
   } catch (error) {
-    setStatus(error.message || "下载失败");
+    setStatus(error.message || "视频下载失败");
   } finally {
-    downloadPageBtn.disabled = false;
+    downloadVideoBtn.disabled = false;
+  }
+});
+
+downloadAudioBtn.addEventListener("click", async () => {
+  downloadAudioBtn.disabled = true;
+  try {
+    currentMediaItems = await getDetectedMedia();
+    const audio = bestAudioCandidate();
+
+    if (validPageUrl()) {
+      const result = await helperDownload({
+        page_url: activeTab.url,
+        media_url: audio?.url || "",
+        title: activeTab.title || "",
+        browser: browserName,
+        fallback_media_urls: fallbackUrls(),
+        download_kind: "audio"
+      }, "audio");
+      setStatus(`最佳音频任务已创建：${result.job_id}`);
+      return;
+    }
+
+    if (audio?.url) {
+      await directDownload(audio.url);
+      setStatus("已保存当前识别到的最佳音频轨。");
+      return;
+    }
+
+    throw new Error("当前页面没有可提取的音频。");
+  } catch (error) {
+    setStatus(error.message || "音频下载失败");
+  } finally {
+    downloadAudioBtn.disabled = false;
   }
 });
 
@@ -345,11 +310,14 @@ refreshBtn.addEventListener("click", rescan);
 clearBtn.addEventListener("click", async () => {
   if (!activeTab?.id) return;
   await chrome.runtime.sendMessage({ type: "OMNIFETCH_CLEAR_MEDIA", tabId: activeTab.id });
-  await renderMedia();
+  currentMediaItems = [];
+  renderSummary();
+  setStatus("已清空当前页面识别记录。重新播放视频即可再次捕获。" );
 });
 
 (async () => {
   activeTab = await getActiveTab();
   pageTitleEl.textContent = activeTab?.title || "当前页面";
-  await Promise.all([checkHelper(), rescan()]);
+  await checkHelper();
+  await rescan();
 })();

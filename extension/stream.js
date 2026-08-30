@@ -1,4 +1,5 @@
 const HELPER_BASE = "http://127.0.0.1:17891";
+const REQUIRED_HELPER = [0, 5, 3];
 
 const params = new URLSearchParams(location.search);
 const mediaUrl = params.get("url") || "";
@@ -14,6 +15,7 @@ const streamTypeEl = document.getElementById("streamType");
 const platformEl = document.getElementById("platform");
 const probeStatusEl = document.getElementById("probeStatus");
 const bestBtn = document.getElementById("bestBtn");
+const audioBtn = document.getElementById("audioBtn");
 const retryBtn = document.getElementById("retryBtn");
 const copyBtn = document.getElementById("copyBtn");
 const formatListEl = document.getElementById("formatList");
@@ -25,11 +27,29 @@ const progressBarEl = document.getElementById("progressBar");
 const progressMetaEl = document.getElementById("progressMeta");
 
 let helperOnline = false;
-let displayFormats = [];
+let helperVersion = "";
 let probeData = null;
+let bestVideoFormat = null;
+let bestAudioFormat = null;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseVersion(value) {
+  return String(value || "")
+    .split(".")
+    .slice(0, 3)
+    .map((part) => Number.parseInt(part, 10) || 0);
+}
+
+function versionAtLeast(value, minimum) {
+  const current = parseVersion(value);
+  for (let index = 0; index < minimum.length; index += 1) {
+    if ((current[index] || 0) > minimum[index]) return true;
+    if ((current[index] || 0) < minimum[index]) return false;
+  }
+  return true;
 }
 
 function formatBytes(value) {
@@ -54,12 +74,7 @@ function showEmpty(message) {
   formatListEl.replaceChildren(empty);
 }
 
-function qualityLabel(item) {
-  if (item.has_video) return item.height ? `${item.height}P` : "视频";
-  return "音频";
-}
-
-function formatDescription(item) {
+function formatDescription(item, kind) {
   const parts = [];
   if (item.width && item.height) parts.push(`${item.width}×${item.height}`);
   if (item.tbr) parts.push(`${Math.round(item.tbr)} kbps`);
@@ -67,32 +82,69 @@ function formatDescription(item) {
   if (item.ext) parts.push(item.ext.toUpperCase());
   if (item.protocol) parts.push(item.protocol);
   if (item.filesize) parts.push(formatBytes(item.filesize));
-  if (item.has_video && !item.has_audio) parts.push("自动合并最佳音频");
-  if (item.has_audio && !item.has_video) parts.push("仅音频");
+  if (kind === "video" && item.has_video && !item.has_audio) parts.push("自动合并最佳音频");
+  if (kind === "audio") parts.push("单独音频");
   return parts.join(" · ") || item.format_note || item.format_id;
 }
 
-function reduceFormats(formats) {
+function pickBestFormats(formats) {
   const list = Array.isArray(formats) ? formats : [];
   const videos = list.filter((item) => item?.has_video);
-  if (!videos.length) return list.filter((item) => item?.has_audio).slice(0, 12);
+  const audios = list.filter((item) => item?.has_audio && !item?.has_video);
 
-  const byHeight = new Map();
-  for (const item of videos) {
-    const key = item.height ? String(item.height) : `id:${item.format_id}`;
-    const old = byHeight.get(key);
-    if (!old) {
-      byHeight.set(key, item);
-      continue;
+  bestVideoFormat = [...videos].sort((a, b) => {
+    const height = Number(b.height || 0) - Number(a.height || 0);
+    if (height) return height;
+    const withAudio = Number(Boolean(b.has_audio)) - Number(Boolean(a.has_audio));
+    if (withAudio) return withAudio;
+    return Number(b.tbr || 0) - Number(a.tbr || 0);
+  })[0] || null;
+
+  bestAudioFormat = [...audios].sort((a, b) => Number(b.tbr || 0) - Number(a.tbr || 0) || Number(b.filesize || 0) - Number(a.filesize || 0))[0] || null;
+}
+
+function createChoiceCard(kind, item) {
+  const card = document.createElement("article");
+  card.className = "format-card";
+
+  const quality = document.createElement("div");
+  quality.className = "quality";
+  quality.textContent = kind === "video"
+    ? `最高画质视频${item?.height ? ` · ${item.height}P` : ""}`
+    : "最佳音频";
+
+  const meta = document.createElement("div");
+  meta.className = "format-meta";
+  meta.textContent = item
+    ? formatDescription(item, kind)
+    : kind === "video"
+      ? "未拿到独立清晰度信息，仍可让下载器自动选择最高画质"
+      : "未拿到独立音轨信息，仍可尝试从播放清单或页面提取最佳音频";
+
+  const btn = document.createElement("button");
+  btn.className = "format-download";
+  btn.textContent = kind === "video" ? "下载视频" : "下载音频";
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    try {
+      await startDownload(kind, item?.format_id || "");
+    } finally {
+      btn.disabled = false;
     }
-    const oldScore = (old.has_audio ? 100000 : 0) + Number(old.tbr || 0);
-    const newScore = (item.has_audio ? 100000 : 0) + Number(item.tbr || 0);
-    if (newScore > oldScore) byHeight.set(key, item);
-  }
+  });
 
-  return [...byHeight.values()]
-    .sort((a, b) => Number(b.height || 0) - Number(a.height || 0) || Number(b.tbr || 0) - Number(a.tbr || 0))
-    .slice(0, 16);
+  card.append(quality, meta, btn);
+  return card;
+}
+
+function renderFormats(formats) {
+  pickBestFormats(formats);
+  formatListEl.replaceChildren();
+  formatListEl.append(createChoiceCard("video", bestVideoFormat));
+  formatListEl.append(createChoiceCard("audio", bestAudioFormat));
+  formatCountEl.textContent = "2";
+  bestBtn.disabled = false;
+  audioBtn.disabled = false;
 }
 
 function setProgress(percent, title, meta = "") {
@@ -111,76 +163,42 @@ async function checkHelper() {
     const res = await fetch(`${HELPER_BASE}/health`, { signal: controller.signal });
     const data = await res.json().catch(() => ({}));
     helperOnline = res.ok && data.ok;
-    helperBadgeEl.textContent = helperOnline ? `助手在线 v${data.version || ""}` : "助手未启动";
+    helperVersion = helperOnline ? String(data.version || "") : "";
+    const ready = helperOnline && versionAtLeast(helperVersion, REQUIRED_HELPER);
+    helperBadgeEl.textContent = helperOnline ? `助手 v${helperVersion}${ready ? "" : " · 版本过旧"}` : "助手未启动";
+    helperBadgeEl.className = `badge ${ready ? "ok" : "bad"}`;
+    return ready;
   } catch (_) {
     helperOnline = false;
+    helperVersion = "";
     helperBadgeEl.textContent = "助手未启动";
+    helperBadgeEl.className = "badge bad";
+    return false;
   } finally {
     clearTimeout(timer);
   }
-  helperBadgeEl.className = `badge ${helperOnline ? "ok" : "bad"}`;
-  return helperOnline;
-}
-
-function renderFormats(formats) {
-  displayFormats = reduceFormats(formats);
-  formatCountEl.textContent = String(displayFormats.length);
-  formatListEl.replaceChildren();
-
-  if (!displayFormats.length) {
-    showEmpty("没有拿到独立清晰度列表。仍可以点击“最高画质下载”，让下载器自动选择最佳可用格式。");
-    bestBtn.disabled = false;
-    return;
-  }
-
-  displayFormats.forEach((item, index) => {
-    const card = document.createElement("article");
-    card.className = "format-card";
-
-    const quality = document.createElement("div");
-    quality.className = "quality";
-    quality.textContent = `${qualityLabel(item)}${index === 0 ? " · 推荐" : ""}`;
-
-    const meta = document.createElement("div");
-    meta.className = "format-meta";
-    meta.textContent = formatDescription(item);
-
-    const btn = document.createElement("button");
-    btn.className = "format-download";
-    btn.textContent = "下载";
-    btn.addEventListener("click", async () => {
-      btn.disabled = true;
-      try {
-        await startDownload(item.format_id);
-      } finally {
-        btn.disabled = false;
-      }
-    });
-
-    card.append(quality, meta, btn);
-    formatListEl.append(card);
-  });
-
-  bestBtn.disabled = false;
 }
 
 async function probe() {
   retryBtn.disabled = true;
   bestBtn.disabled = true;
+  audioBtn.disabled = true;
   probeStatusEl.textContent = "正在分析";
   formatCountEl.textContent = "0";
-  showEmpty("正在读取媒体清晰度、码率和音视频轨信息…");
+  showEmpty("正在解析播放清单、最高画质和音频轨…");
 
   if (!mediaUrl) {
     probeStatusEl.textContent = "缺少地址";
-    showEmpty("没有收到媒体地址，请回到视频页面重新捕获。");
+    showEmpty("没有收到播放清单地址，请回到视频页面重新捕获。");
     retryBtn.disabled = false;
     return;
   }
 
   if (!(await checkHelper())) {
-    probeStatusEl.textContent = "助手未启动";
-    showEmpty("M3U8 / DASH 清晰度分析和合并需要本地助手。请双击 run-helper.bat，或先运行 install-autostart.bat 设置自动后台启动，然后点击“重新分析”。");
+    probeStatusEl.textContent = helperOnline ? "助手版本过旧" : "助手未启动";
+    showEmpty(helperOnline
+      ? `当前后台助手是 v${helperVersion}，请升级到 v0.5.3 后再试。`
+      : "流媒体分析和合并需要本地助手。请运行 v0.5.3 的 install-autostart.bat 或 run-helper.bat。");
     retryBtn.disabled = false;
     return;
   }
@@ -208,39 +226,43 @@ async function probe() {
     probeStatusEl.textContent = "分析失败";
     showEmpty(error.message || error);
     bestBtn.disabled = false;
+    audioBtn.disabled = false;
   } finally {
     retryBtn.disabled = false;
   }
 }
 
-async function startDownload(formatId = "") {
+async function startDownload(kind = "video", formatId = "") {
   if (!(await checkHelper())) {
-    setProgress(0, "无法开始下载", "请先双击 run-helper.bat，或运行 install-autostart.bat 设置自动后台启动。");
+    setProgress(0, "无法开始下载", helperOnline ? `请升级后台助手到 v0.5.3。当前 v${helperVersion}` : "请先启动 v0.5.3 本地助手。");
     return;
   }
 
-  setProgress(0, "正在创建下载任务", formatId ? `格式：${formatId}` : "自动选择最高画质");
+  setProgress(0, kind === "audio" ? "正在创建音频任务" : "正在创建视频任务", formatId ? `格式：${formatId}` : kind === "audio" ? "自动选择最佳音频" : "自动选择最高画质");
   try {
+    const payload = {
+      media_url: mediaUrl,
+      page_url: pageUrl,
+      title: probeData?.title || titleHint,
+      browser: browserName,
+      download_kind: kind
+    };
+    if (kind === "video" && formatId) payload.format_id = formatId;
+
     const res = await fetch(`${HELPER_BASE}/download`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        media_url: mediaUrl,
-        page_url: pageUrl,
-        title: probeData?.title || titleHint,
-        browser: browserName,
-        format_id: formatId
-      })
+      body: JSON.stringify(payload)
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) throw new Error(data.error || `创建任务失败 (${res.status})`);
-    await pollJob(data.job_id);
+    await pollJob(data.job_id, kind);
   } catch (error) {
     setProgress(0, "下载失败", String(error.message || error));
   }
 }
 
-async function pollJob(jobId) {
+async function pollJob(jobId, kind) {
   for (let attempt = 0; attempt < 720; attempt += 1) {
     await sleep(1000);
     try {
@@ -250,7 +272,10 @@ async function pollJob(jobId) {
 
       const job = data.job;
       if (job.status === "completed") {
-        setProgress(100, "下载完成", `${job.title || "视频"} · 已保存到 Downloads\\OmniFetch`);
+        const fileSize = Number(job.output_bytes || 0);
+        const meta = [`已保存到 Downloads\\OmniFetch`];
+        if (fileSize) meta.unshift(formatBytes(fileSize));
+        setProgress(100, `${kind === "audio" ? "音频" : "视频"}下载完成`, meta.join(" · "));
         return;
       }
       if (job.status === "failed") {
@@ -261,10 +286,10 @@ async function pollJob(jobId) {
       const labels = {
         queued: "等待下载",
         starting: "准备下载",
-        resolving: "正在解析媒体",
-        retrying: "当前策略失败，正在自动切换",
+        resolving: kind === "audio" ? "正在解析最佳音频" : "正在解析最高画质",
+        retrying: "当前结果无效，正在自动切换下载策略",
         downloading: "正在并发下载分片",
-        processing: "正在合并音视频"
+        processing: kind === "audio" ? "正在生成音频文件" : "正在合并音视频"
       };
       const pieces = [];
       const speed = formatSpeed(job.speed);
@@ -278,10 +303,8 @@ async function pollJob(jobId) {
   setProgress(0, "任务仍在运行", "下载时间较长，请保持本地助手运行。");
 }
 
-bestBtn.addEventListener("click", () => {
-  const best = displayFormats[0];
-  startDownload(best?.format_id || "");
-});
+bestBtn.addEventListener("click", () => startDownload("video", bestVideoFormat?.format_id || ""));
+audioBtn.addEventListener("click", () => startDownload("audio", bestAudioFormat?.format_id || ""));
 retryBtn.addEventListener("click", probe);
 copyBtn.addEventListener("click", async () => {
   try {

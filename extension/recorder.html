@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OmniFetch 录制模式</title>
+  <link rel="stylesheet" href="recorder.css" />
+</head>
+<body>
+  <main class="page">
+    <header>
+      <div class="brand">OmniFetch · 兜底模式</div>
+      <h1>标签页录制</h1>
+      <p id="targetTitle" class="subtitle">正在读取目标标签页…</p>
+    </header>
+
+    <section class="panel notice">
+      <strong>什么时候用这个？</strong>
+      <p>网页能正常播放，但 OmniFetch 抓不到 MP4 / M3U8 / DASH 真实地址时使用。它会实时录制目标标签页的画面和声音，属于最后一层兜底，不等于原始媒体文件无损下载。</p>
+    </section>
+
+    <section class="panel controls">
+      <div class="state-row">
+        <div>
+          <span class="label">当前状态</span>
+          <strong id="stateText">等待开始</strong>
+        </div>
+        <div>
+          <span class="label">录制时长</span>
+          <strong id="timer">00:00</strong>
+        </div>
+        <div>
+          <span class="label">输出格式</span>
+          <strong id="formatText">WEBM</strong>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="startBtn" class="btn primary">开始录制</button>
+        <button id="stopBtn" class="btn danger" disabled>停止并保存</button>
+      </div>
+
+      <div id="status" class="status">点击“开始录制”后，切回视频标签页，从你想保存的位置开始播放。</div>
+    </section>
+
+    <section class="panel steps">
+      <h2>使用顺序</h2>
+      <ol>
+        <li>点击“开始录制”。</li>
+        <li>切回原视频标签页。</li>
+        <li>从需要的位置开始播放，录制会在后台继续。</li>
+        <li>录完后回到本页，点击“停止并保存”。</li>
+        <li>浏览器会弹出保存窗口，文件格式通常为 WebM。</li>
+      </ol>
+    </section>
+
+    <footer>录制模式只捕获你当前标签页实际播放出的内容。DRM、付费墙和访问控制不会被绕过。</footer>
+  </main>
+  <script src="recorder.js"></script>
+</body>
+</html>

@@ -23,7 +23,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r helper/requirements.txt
-          pip install pyinstaller
+          pip install pyinstaller imageio-ffmpeg
 
       - name: Validate extension files
         shell: pwsh
@@ -38,9 +38,18 @@ jobs:
         run: |
           pyinstaller --noconfirm --clean --onefile --name OmniFetchHelper --collect-all yt_dlp helper/server.py
 
+      - name: Stage FFmpeg
+        shell: pwsh
+        run: |
+          $ffmpeg = python -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"
+          if (-not (Test-Path $ffmpeg)) { throw "FFmpeg binary not found: $ffmpeg" }
+          Copy-Item $ffmpeg dist/ffmpeg.exe
+
       - name: Smoke test helper EXE
         shell: pwsh
         run: |
+          $oldPath = $env:PATH
+          $env:PATH = "$PWD\dist;$env:PATH"
           $proc = Start-Process -FilePath "$PWD\dist\OmniFetchHelper.exe" -PassThru
           $ok = $false
           try {
@@ -48,7 +57,7 @@ jobs:
               Start-Sleep -Seconds 1
               try {
                 $health = Invoke-RestMethod -Uri "http://127.0.0.1:17891/health" -TimeoutSec 2
-                if ($health.ok -eq $true) {
+                if ($health.ok -eq $true -and $health.ffmpeg -eq $true) {
                   $ok = $true
                   break
                 }
@@ -56,12 +65,13 @@ jobs:
               }
             }
             if (-not $ok) {
-              throw "OmniFetchHelper.exe health check failed"
+              throw "OmniFetchHelper.exe health/FFmpeg check failed"
             }
           } finally {
             if ($proc -and -not $proc.HasExited) {
               Stop-Process -Id $proc.Id -Force
             }
+            $env:PATH = $oldPath
           }
 
       - name: Assemble package
@@ -70,6 +80,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path package/OmniFetch | Out-Null
           Copy-Item -Recurse extension package/OmniFetch/extension
           Copy-Item dist/OmniFetchHelper.exe package/OmniFetch/OmniFetchHelper.exe
+          Copy-Item dist/ffmpeg.exe package/OmniFetch/ffmpeg.exe
           Copy-Item run-helper-exe.bat package/OmniFetch/run-helper.bat
           Copy-Item README.md package/OmniFetch/README.md
           if (Test-Path LICENSE) { Copy-Item LICENSE package/OmniFetch/LICENSE }

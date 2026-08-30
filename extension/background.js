@@ -129,6 +129,20 @@ function visibleItems(tabId) {
   return clean.length ? clean : all;
 }
 
+function findRequestContext(url, tabId) {
+  if (!url) return {};
+  if (Number.isInteger(tabId)) {
+    return MEDIA_BY_TAB.get(tabId)?.get(url)?.requestHeaders || {};
+  }
+  let newest = null;
+  for (const items of MEDIA_BY_TAB.values()) {
+    const item = items.get(url);
+    if (!item) continue;
+    if (!newest || Number(item.detectedAt || 0) > Number(newest.detectedAt || 0)) newest = item;
+  }
+  return newest?.requestHeaders || {};
+}
+
 async function refreshBadge(tabId) {
   if (!Number.isInteger(tabId) || tabId < 0) return;
   const items = visibleItems(tabId);
@@ -247,8 +261,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "OMNIFETCH_GET_REQUEST_CONTEXT") {
-    const item = MEDIA_BY_TAB.get(message.tabId)?.get(message.url);
-    sendResponse({ ok: true, headers: item?.requestHeaders || {} });
+    sendResponse({ ok: true, headers: findRequestContext(message.url, message.tabId) });
     return;
   }
 

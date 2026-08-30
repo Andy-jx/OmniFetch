@@ -18,7 +18,7 @@ if not exist ".venv\Scripts\python.exe" (
     exit /b 1
 )
 
-".venv\Scripts\python.exe" "helper\server.py"
+".venv\Scripts\python.exe" "helper\server_v2.py"
 set "EXIT_CODE=%errorlevel%"
 
 echo.

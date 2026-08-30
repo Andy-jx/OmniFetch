@@ -28,18 +28,18 @@ jobs:
       - name: Validate source files
         shell: pwsh
         run: |
-          python -m py_compile helper/server.py helper/server_v2.py helper/server_v3.py helper/server_v4.py helper/server_v5.py
-          node --check extension/background.js
+          python -m py_compile helper/server.py helper/server_v2.py helper/server_v3.py helper/server_v4.py helper/server_v5.py helper/server_v6.py
+          node --check extension/background_v6.js
           node --check extension/content.js
-          node --check extension/popup.js
-          node --check extension/stream.js
+          node --check extension/popup_v6.js
+          node --check extension/stream_v6.js
           node --check extension/recorder.js
           Get-Content extension/manifest.json -Raw | ConvertFrom-Json | Out-Null
 
       - name: Build helper EXE
         shell: pwsh
         run: |
-          pyinstaller --noconfirm --clean --onefile --name OmniFetchHelper --collect-all yt_dlp --paths helper helper/server_v5.py
+          pyinstaller --noconfirm --clean --onefile --name OmniFetchHelper --collect-all yt_dlp --paths helper helper/server_v6.py
 
       - name: Stage FFmpeg
         shell: pwsh
@@ -61,7 +61,7 @@ jobs:
               try {
                 $health = Invoke-RestMethod -Uri "http://127.0.0.1:17891/health" -TimeoutSec 2
                 $caps = Invoke-RestMethod -Uri "http://127.0.0.1:17891/capabilities" -TimeoutSec 2
-                if ($health.ok -eq $true -and $health.ffmpeg -eq $true -and $health.version -eq '0.5.5' -and $caps.quality_probe -eq $true -and $caps.concurrent_fragments -eq 8) {
+                if ($health.ok -eq $true -and $health.ffmpeg -eq $true -and $health.version -eq '0.5.6' -and $caps.quality_probe -eq $true -and $caps.concurrent_fragments -eq 8) {
                   $ok = $true
                   break
                 }

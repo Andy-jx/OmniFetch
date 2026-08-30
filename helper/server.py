@@ -1,9 +1,8 @@
 from __future__ import annotations
 
+import ipaddress
 import json
-import os
 import shutil
-import subprocess
 import threading
 import time
 import traceback
@@ -20,6 +19,7 @@ DOWNLOAD_DIR = Path.home() / "Downloads" / "OmniFetch"
 TOOLS_DIR = Path(__file__).resolve().parent / "tools"
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
+ALLOWED_EXTENSION_ORIGINS = ("chrome-extension://", "edge-extension://")
 
 
 def now_ts() -> int:
@@ -34,9 +34,26 @@ def safe_http_url(value: str | None) -> str:
     value = (value or "").strip()
     if not value:
         return ""
+
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("只接受 http/https 地址")
+
+    hostname = (parsed.hostname or "").lower().strip(".")
+    if not hostname:
+        raise ValueError("地址缺少有效主机名")
+    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(".local"):
+        raise ValueError("不允许下载本机或局域网地址")
+
+    try:
+        ip = ipaddress.ip_address(hostname)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            raise ValueError("不允许下载本机或局域网地址")
+    except ValueError as exc:
+        if str(exc) == "不允许下载本机或局域网地址":
+            raise
+        # 普通域名不是 IP，继续处理。
+
     return value
 
 
@@ -87,7 +104,7 @@ def progress_hook(job_id: str):
     return hook
 
 
-def base_ydl_options(job_id: str, page_url: str, title_hint: str) -> dict:
+def base_ydl_options(job_id: str, page_url: str) -> dict:
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     ffmpeg_location = find_ffmpeg()
 
@@ -139,10 +156,10 @@ def run_download(job_id: str, payload: dict) -> None:
         browser = str(payload.get("browser") or "").strip().lower()
 
         update_job(job_id, status="starting", target_url=target_url)
-        opts = base_ydl_options(job_id, page_url, title_hint)
+        opts = base_ydl_options(job_id, page_url)
 
         # 对页面地址优先尝试读取用户自己的浏览器登录状态。
-        # 如果浏览器 Cookie 数据库被占用或读取失败，会自动无 Cookie 重试。
+        # 读取失败时自动无 Cookie 重试，公开页面仍可继续下载。
         use_browser_cookies = bool(page_url and not media_url and browser in {"chrome", "edge", "firefox"})
 
         attempts: list[tuple[str, dict]] = []
@@ -210,8 +227,17 @@ class OmniFetchHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args) -> None:
         print(f"[{self.log_date_time_string()}] {fmt % args}")
 
+    def _origin_allowed(self) -> bool:
+        origin = (self.headers.get("Origin") or "").strip().lower()
+        if not origin:
+            return True
+        return origin.startswith(ALLOWED_EXTENSION_ORIGINS)
+
     def _cors(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
+        origin = (self.headers.get("Origin") or "").strip()
+        if origin.lower().startswith(ALLOWED_EXTENSION_ORIGINS):
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.send_header("Cache-Control", "no-store")
@@ -226,11 +252,18 @@ class OmniFetchHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_OPTIONS(self) -> None:
+        if not self._origin_allowed():
+            self.send_json(403, {"ok": False, "error": "Origin not allowed"})
+            return
         self.send_response(204)
         self._cors()
         self.end_headers()
 
     def do_GET(self) -> None:
+        if not self._origin_allowed():
+            self.send_json(403, {"ok": False, "error": "Origin not allowed"})
+            return
+
         path = urlparse(self.path).path
         if path == "/health":
             self.send_json(
@@ -264,6 +297,10 @@ class OmniFetchHandler(BaseHTTPRequestHandler):
         self.send_json(404, {"ok": False, "error": "Not Found"})
 
     def do_POST(self) -> None:
+        if not self._origin_allowed():
+            self.send_json(403, {"ok": False, "error": "Origin not allowed"})
+            return
+
         path = urlparse(self.path).path
         if path != "/download":
             self.send_json(404, {"ok": False, "error": "Not Found"})
@@ -295,10 +332,10 @@ class OmniFetchHandler(BaseHTTPRequestHandler):
                     "output_dir": str(DOWNLOAD_DIR),
                 },
             )
-        except ValueError as exc:
-            self.send_json(400, {"ok": False, "error": str(exc)})
         except json.JSONDecodeError:
             self.send_json(400, {"ok": False, "error": "JSON 格式错误"})
+        except ValueError as exc:
+            self.send_json(400, {"ok": False, "error": str(exc)})
         except Exception as exc:
             self.send_json(500, {"ok": False, "error": str(exc)})
 

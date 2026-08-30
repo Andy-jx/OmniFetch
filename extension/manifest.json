@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "OmniFetch 全平台下载助手",
-  "version": "0.5.0",
-  "description": "网页媒体嗅探下载器：支持 MP4/WebM 直存、HLS/M3U8/DASH 清晰度选择与并发合并，并提供标签页录制兜底模式。",
+  "version": "0.5.2",
+  "description": "网页媒体嗅探下载器：主界面只保留最高画质视频和单独音频，自动隐藏 M4S/TS 分片，并支持 HLS/DASH 与录制兜底。",
   "permissions": [
     "activeTab",
     "downloads",

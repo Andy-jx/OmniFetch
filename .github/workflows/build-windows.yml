@@ -85,6 +85,9 @@ jobs:
           Copy-Item dist/OmniFetchHelper.exe package/OmniFetch/OmniFetchHelper.exe
           Copy-Item dist/ffmpeg.exe package/OmniFetch/ffmpeg.exe
           Copy-Item run-helper-exe.bat package/OmniFetch/run-helper.bat
+          Copy-Item start-helper-hidden.vbs package/OmniFetch/start-helper-hidden.vbs
+          Copy-Item install-autostart.bat package/OmniFetch/install-autostart.bat
+          Copy-Item uninstall-autostart.bat package/OmniFetch/uninstall-autostart.bat
           Copy-Item README.md package/OmniFetch/README.md
           if (Test-Path LICENSE) { Copy-Item LICENSE package/OmniFetch/LICENSE }
           Compress-Archive -Path package/OmniFetch/* -DestinationPath package/OmniFetch-Windows.zip -Force

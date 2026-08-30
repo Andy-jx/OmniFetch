@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "OmniFetch 全平台下载助手",
-  "version": "0.5.5",
-  "description": "网页媒体嗅探下载器：优先解析 HLS master.m3u8 并显式选择最高分辨率变体，保留最佳音频，同时继续隐藏 M4S/TS 分片并复用浏览器请求环境。",
+  "version": "0.5.6",
+  "description": "网页媒体嗅探下载器：播放后识别，优先主播放清单并显示当前下载画质；增强抖音动态 CDN 视频捕获，保留最佳音频并隐藏 M4S/TS 分片。",
   "permissions": [
     "activeTab",
     "downloads",
@@ -15,7 +15,7 @@
     "<all_urls>"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background_v6.js"
   },
   "action": {
     "default_title": "OmniFetch",

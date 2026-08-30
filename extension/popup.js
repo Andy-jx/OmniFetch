@@ -1,6 +1,7 @@
 const HELPER_BASE = "http://127.0.0.1:17891";
 
 const pageTitleEl = document.getElementById("pageTitle");
+const platformBadgeEl = document.getElementById("platformBadge");
 const helperBadgeEl = document.getElementById("helperBadge");
 const statusTextEl = document.getElementById("statusText");
 const mediaListEl = document.getElementById("mediaList");
@@ -10,7 +11,35 @@ const clearBtn = document.getElementById("clear");
 
 let activeTab = null;
 let helperOnline = false;
+let currentMediaItems = [];
 const browserName = navigator.userAgent.includes("Edg/") ? "edge" : "chrome";
+
+const PLATFORM_RULES = [
+  [["x.com", "twitter.com"], "X / Twitter"],
+  [["youtube.com", "youtu.be"], "YouTube"],
+  [["tiktok.com"], "TikTok"],
+  [["douyin.com", "iesdouyin.com"], "抖音"],
+  [["bilibili.com", "b23.tv"], "哔哩哔哩"],
+  [["instagram.com"], "Instagram"],
+  [["facebook.com", "fb.watch"], "Facebook"],
+  [["xiaohongshu.com", "xhslink.com"], "小红书"],
+  [["kuaishou.com", "gifshow.com"], "快手"],
+  [["vimeo.com"], "Vimeo"],
+  [["twitch.tv"], "Twitch"],
+  [["reddit.com", "redd.it"], "Reddit"],
+  [["dailymotion.com", "dai.ly"], "Dailymotion"],
+  [["soundcloud.com"], "SoundCloud"]
+];
+
+function detectPlatform(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    for (const [domains, name] of PLATFORM_RULES) {
+      if (domains.some((domain) => host === domain || host.endsWith(`.${domain}`))) return name;
+    }
+  } catch (_) {}
+  return "通用网页";
+}
 
 function setStatus(text) {
   statusTextEl.textContent = text;
@@ -36,22 +65,26 @@ async function getActiveTab() {
 
 async function checkHelper() {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 900);
+  const timer = setTimeout(() => controller.abort(), 1000);
   try {
     const res = await fetch(`${HELPER_BASE}/health`, { signal: controller.signal });
-    helperOnline = res.ok;
+    const data = await res.json().catch(() => ({}));
+    helperOnline = res.ok && data.ok;
+    helperBadgeEl.textContent = helperOnline
+      ? `助手在线${data.version ? ` v${data.version}` : ""}`
+      : "本地助手未启动";
   } catch (_) {
     helperOnline = false;
+    helperBadgeEl.textContent = "本地助手未启动";
   } finally {
     clearTimeout(timer);
   }
 
-  helperBadgeEl.textContent = helperOnline ? "本地助手在线" : "本地助手未启动";
   helperBadgeEl.className = `badge ${helperOnline ? "ok" : "bad"}`;
 }
 
 async function pollJob(jobId) {
-  for (let attempt = 0; attempt < 180; attempt += 1) {
+  for (let attempt = 0; attempt < 240; attempt += 1) {
     await sleep(1000);
     try {
       const res = await fetch(`${HELPER_BASE}/jobs/${jobId}`);
@@ -70,18 +103,19 @@ async function pollJob(jobId) {
 
       const percent = Number.isFinite(job.percent) ? ` ${job.percent}%` : "";
       const eta = Number.isFinite(job.eta) ? `，剩余约 ${job.eta}s` : "";
+      const attemptText = Number.isFinite(job.attempt) && Number.isFinite(job.attempt_total)
+        ? ` [${job.attempt}/${job.attempt_total}]`
+        : "";
       const labels = {
         queued: "等待中",
         starting: "准备下载",
         resolving: "正在解析",
-        retrying: "正在重试",
+        retrying: "当前策略失败，自动切换",
         downloading: "正在下载",
         processing: "正在合并"
       };
-      setStatus(`${labels[job.status] || job.status}${percent}${eta}`);
-    } catch (_) {
-      // 弹窗关闭后轮询自然结束；短暂失败时继续等待。
-    }
+      setStatus(`${labels[job.status] || job.status}${attemptText}${percent}${eta}`);
+    } catch (_) {}
   }
 }
 
@@ -90,7 +124,7 @@ async function helperDownload(payload) {
     await checkHelper();
   }
   if (!helperOnline) {
-    throw new Error("本地助手未启动。请先双击 run-helper.bat。 ");
+    throw new Error("本地助手未启动。请先双击 run-helper.bat。");
   }
 
   const res = await fetch(`${HELPER_BASE}/download`, {
@@ -120,7 +154,8 @@ function createMediaCard(item) {
 
   const source = document.createElement("span");
   source.className = "media-source";
-  source.textContent = escapeText(item.source || "detected");
+  const sizeMb = item.contentLength ? ` · ${(item.contentLength / 1024 / 1024).toFixed(1)} MB` : "";
+  source.textContent = `${escapeText(item.source || "detected")}${sizeMb}`;
 
   head.append(type, source);
 
@@ -132,29 +167,19 @@ function createMediaCard(item) {
   const actions = document.createElement("div");
   actions.className = "media-actions";
 
-  const isDirect = ["mp4", "webm", "mov", "m4v"].includes(item.type);
   const mainBtn = document.createElement("button");
   mainBtn.className = "small-btn primary";
-  mainBtn.textContent = isDirect ? "直接下载" : "助手下载";
+  mainBtn.textContent = "下载这个资源";
   mainBtn.addEventListener("click", async () => {
     mainBtn.disabled = true;
     try {
-      if (isDirect) {
-        const result = await chrome.runtime.sendMessage({
-          type: "OMNIFETCH_DIRECT_DOWNLOAD",
-          url: item.url
-        });
-        if (!result?.ok) throw new Error(result?.error || "浏览器下载失败");
-        setStatus("已交给浏览器下载。 ");
-      } else {
-        const result = await helperDownload({
-          media_url: item.url,
-          page_url: activeTab?.url || item.pageUrl || "",
-          title: activeTab?.title || item.title || "",
-          browser: browserName
-        });
-        setStatus(`已创建下载任务：${result.job_id}`);
-      }
+      const result = await helperDownload({
+        media_url: item.url,
+        page_url: activeTab?.url || item.pageUrl || "",
+        title: activeTab?.title || item.title || "",
+        browser: browserName
+      });
+      setStatus(`已创建下载任务：${result.job_id}`);
     } catch (error) {
       setStatus(error.message || "下载失败");
     } finally {
@@ -168,9 +193,9 @@ function createMediaCard(item) {
   copyBtn.addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(item.url);
-      setStatus("媒体链接已复制。 ");
+      setStatus("媒体链接已复制。");
     } catch (_) {
-      setStatus("复制失败。 ");
+      setStatus("复制失败。");
     }
   });
 
@@ -179,29 +204,32 @@ function createMediaCard(item) {
   return card;
 }
 
-async function renderMedia() {
-  if (!activeTab?.id) return;
+async function getDetectedMedia() {
+  if (!activeTab?.id) return [];
   const response = await chrome.runtime.sendMessage({
     type: "OMNIFETCH_GET_MEDIA",
     tabId: activeTab.id
   });
+  return response?.items || [];
+}
 
-  const items = response?.items || [];
+async function renderMedia() {
+  currentMediaItems = await getDetectedMedia();
   mediaListEl.replaceChildren();
 
-  if (!items.length) {
+  if (!currentMediaItems.length) {
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.textContent = "暂未检测到媒体资源。先播放当前视频 2–5 秒，再点“重新检测”。";
+    empty.textContent = "暂未捕获到媒体流。仍可直接点“智能下载当前视频”；如果失败，再播放视频 2–5 秒后重新检测。";
     mediaListEl.append(empty);
-    setStatus("当前检测到 0 个可用媒体资源。 ");
+    setStatus("当前捕获到 0 个媒体资源；页面解析仍可尝试。");
     return;
   }
 
-  for (const item of items) {
+  for (const item of currentMediaItems) {
     mediaListEl.append(createMediaCard(item));
   }
-  setStatus(`当前检测到 ${items.length} 个媒体资源。`);
+  setStatus(`已捕获 ${currentMediaItems.length} 个媒体资源，可直接智能下载。`);
 }
 
 async function rescan() {
@@ -209,7 +237,7 @@ async function rescan() {
   refreshBtn.disabled = true;
   try {
     await chrome.tabs.sendMessage(activeTab.id, { type: "OMNIFETCH_RESCAN" }).catch(() => null);
-    await sleep(250);
+    await sleep(350);
     await renderMedia();
   } finally {
     refreshBtn.disabled = false;
@@ -218,18 +246,25 @@ async function rescan() {
 
 downloadPageBtn.addEventListener("click", async () => {
   if (!activeTab?.url || !/^https?:/i.test(activeTab.url)) {
-    setStatus("当前页面不能作为下载地址。 ");
+    setStatus("当前页面不能作为下载地址。");
     return;
   }
 
   downloadPageBtn.disabled = true;
   try {
+    currentMediaItems = await getDetectedMedia();
+    const fallbackMediaUrls = currentMediaItems
+      .filter((item) => item?.url && item.type !== "segment")
+      .slice(0, 10)
+      .map((item) => item.url);
+
     const result = await helperDownload({
       page_url: activeTab.url,
       title: activeTab.title || "",
-      browser: browserName
+      browser: browserName,
+      fallback_media_urls: fallbackMediaUrls
     });
-    setStatus(`已创建页面下载任务：${result.job_id}`);
+    setStatus(`已创建 ${result.platform || detectPlatform(activeTab.url)} 智能下载任务：${result.job_id}`);
   } catch (error) {
     setStatus(error.message || "创建下载任务失败");
   } finally {
@@ -248,5 +283,6 @@ clearBtn.addEventListener("click", async () => {
 (async () => {
   activeTab = await getActiveTab();
   pageTitleEl.textContent = activeTab?.title || "当前页面";
+  platformBadgeEl.textContent = detectPlatform(activeTab?.url || "");
   await Promise.all([checkHelper(), rescan()]);
 })();

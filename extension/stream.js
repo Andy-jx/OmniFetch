@@ -1,5 +1,5 @@
 const HELPER_BASE = "http://127.0.0.1:17891";
-const REQUIRED_HELPER = [0, 5, 3];
+const REQUIRED_HELPER = [0, 5, 4];
 
 const params = new URLSearchParams(location.search);
 const mediaUrl = params.get("url") || "";
@@ -31,6 +31,7 @@ let helperVersion = "";
 let probeData = null;
 let bestVideoFormat = null;
 let bestAudioFormat = null;
+let requestContext = {};
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -156,6 +157,19 @@ function setProgress(percent, title, meta = "") {
   progressMetaEl.textContent = meta;
 }
 
+async function loadRequestContext() {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "OMNIFETCH_GET_REQUEST_CONTEXT",
+      url: mediaUrl
+    });
+    requestContext = response?.headers || {};
+  } catch (_) {
+    requestContext = {};
+  }
+  return requestContext;
+}
+
 async function checkHelper() {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 1200);
@@ -197,11 +211,13 @@ async function probe() {
   if (!(await checkHelper())) {
     probeStatusEl.textContent = helperOnline ? "助手版本过旧" : "助手未启动";
     showEmpty(helperOnline
-      ? `当前后台助手是 v${helperVersion}，请升级到 v0.5.3 后再试。`
-      : "流媒体分析和合并需要本地助手。请运行 v0.5.3 的 install-autostart.bat 或 run-helper.bat。");
+      ? `当前后台助手是 v${helperVersion}，请升级到 v0.5.4 后再试。`
+      : "流媒体分析和合并需要本地助手。请运行 v0.5.4 的 install-autostart.bat 或 run-helper.bat。");
     retryBtn.disabled = false;
     return;
   }
+
+  await loadRequestContext();
 
   try {
     const res = await fetch(`${HELPER_BASE}/probe`, {
@@ -211,7 +227,8 @@ async function probe() {
         media_url: mediaUrl,
         page_url: pageUrl,
         title: titleHint,
-        browser: browserName
+        browser: browserName,
+        request_headers: requestContext
       })
     });
     const data = await res.json().catch(() => ({}));
@@ -234,9 +251,11 @@ async function probe() {
 
 async function startDownload(kind = "video", formatId = "") {
   if (!(await checkHelper())) {
-    setProgress(0, "无法开始下载", helperOnline ? `请升级后台助手到 v0.5.3。当前 v${helperVersion}` : "请先启动 v0.5.3 本地助手。");
+    setProgress(0, "无法开始下载", helperOnline ? `请升级后台助手到 v0.5.4。当前 v${helperVersion}` : "请先启动 v0.5.4 本地助手。");
     return;
   }
+
+  if (!Object.keys(requestContext).length) await loadRequestContext();
 
   setProgress(0, kind === "audio" ? "正在创建音频任务" : "正在创建视频任务", formatId ? `格式：${formatId}` : kind === "audio" ? "自动选择最佳音频" : "自动选择最高画质");
   try {
@@ -245,7 +264,8 @@ async function startDownload(kind = "video", formatId = "") {
       page_url: pageUrl,
       title: probeData?.title || titleHint,
       browser: browserName,
-      download_kind: kind
+      download_kind: kind,
+      request_headers: requestContext
     };
     if (kind === "video" && formatId) payload.format_id = formatId;
 

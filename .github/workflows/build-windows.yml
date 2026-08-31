@@ -28,7 +28,7 @@ jobs:
       - name: Validate source files
         shell: pwsh
         run: |
-          python -m py_compile helper/server.py helper/server_v2.py helper/server_v3.py helper/server_v4.py helper/server_v5.py helper/server_v6.py helper/server_v7.py helper/server_v8.py helper/server_v9.py helper/server_v10.py helper/server_v11.py helper/server_v12.py
+          python -m py_compile helper/server.py helper/server_v2.py helper/server_v3.py helper/server_v4.py helper/server_v5.py helper/server_v6.py helper/server_v7.py helper/server_v8.py helper/server_v9.py helper/server_v10.py helper/server_v11.py helper/server_v12.py helper/server_v13.py
           node --check extension/background_v11.js
           node --check extension/content_v11.js
           node --check extension/popup_v11.js
@@ -43,12 +43,13 @@ jobs:
           import sys
           from pathlib import Path
           sys.path.insert(0, 'helper')
-          import server_v12 as s
+          import server_v13 as s
           import server_v10 as v10
 
-          assert s.core.VERSION == '0.6.1'
+          assert s.core.VERSION == '0.6.2'
           assert s.v11._quality_p(1920, 1080) == 1080
           assert s.v11._url_quality_hint('https://cdn.example/video_1280x720.mp4') == 720
+
           payload = {
               'media_url': 'https://video.example/master.m3u8',
               'media_candidates': [
@@ -61,19 +62,35 @@ jobs:
           }
           items = s.v11._normalize_candidates(payload)
           assert len(items) == 2
+
           playlist = '#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:5.5,\na.mp4\n#EXTINF:6.0,\nb.mp4\n#EXT-X-ENDLIST\n'
           Path('test-local.m3u8').write_text(playlist, encoding='utf-8')
-          assert abs(s._manifest_duration(Path('test-local.m3u8')) - 11.5) < 0.001
+          assert abs(s.v12._manifest_duration(Path('test-local.m3u8')) - 11.5) < 0.001
           init, segments, duration = v10._parse_media_playlist_v10('https://video.example/720/index.m3u8', playlist)
           assert init is None and len(segments) == 2 and abs(duration - 11.5) < 0.001
-          print('OmniFetch 0.6.1 playback-safety self-tests passed')
+
+          # Regression test for the real failure: junk/PNG-like bytes before an
+          # MPEG-TS payload must be stripped before final MP4 packaging.
+          packet = bytearray(188)
+          packet[0] = 0x47
+          wrapped = b'\x89PNG\r\n\x1a\n' + b'fake-image-wrapper' * 5 + bytes(packet) * 8 + b'trailing-wrapper'
+          wrapped_path = Path('wrapped-segment.bin')
+          wrapped_path.write_bytes(wrapped)
+          span = s._ts_span(wrapped_path)
+          assert span is not None and span[0] > 0
+          out, kind, repaired = s._normalize_part(wrapped_path, Path('normalized-test'), 0)
+          assert kind == 'ts' and repaired is True
+          cleaned = out.read_bytes()
+          assert cleaned[0] == 0x47 and len(cleaned) == 188 * 8
+          assert all(cleaned[i] == 0x47 for i in range(0, len(cleaned), 188))
+          print('OmniFetch 0.6.2 wrapper-repair self-tests passed')
           '@ | Set-Content -Encoding UTF8 selftest.py
           python selftest.py
 
       - name: Build helper EXE
         shell: pwsh
         run: |
-          pyinstaller --noconfirm --clean --onefile --name OmniFetchHelper --collect-all yt_dlp --paths helper helper/server_v12.py
+          pyinstaller --noconfirm --clean --onefile --name OmniFetchHelper --collect-all yt_dlp --paths helper helper/server_v13.py
 
       - name: Stage FFmpeg
         shell: pwsh
@@ -102,7 +119,7 @@ jobs:
               try {
                 $health = Invoke-RestMethod -Uri "http://127.0.0.1:17891/health" -TimeoutSec 2
                 $caps = Invoke-RestMethod -Uri "http://127.0.0.1:17891/capabilities" -TimeoutSec 2
-                if ($health.ok -eq $true -and $health.ffmpeg -eq $true -and $health.version -eq '0.6.1' -and $caps.quality_probe -eq $true -and $caps.concurrent_fragments -eq 8) {
+                if ($health.ok -eq $true -and $health.ffmpeg -eq $true -and $health.version -eq '0.6.2' -and $caps.quality_probe -eq $true -and $caps.concurrent_fragments -eq 8) {
                   $ok = $true
                   break
                 }

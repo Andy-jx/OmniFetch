@@ -28,18 +28,51 @@ jobs:
       - name: Validate source files
         shell: pwsh
         run: |
-          python -m py_compile helper/server.py helper/server_v2.py helper/server_v3.py helper/server_v4.py helper/server_v5.py helper/server_v6.py helper/server_v7.py helper/server_v8.py helper/server_v9.py helper/server_v10.py
-          node --check extension/background_v6.js
-          node --check extension/content.js
-          node --check extension/popup_v6.js
-          node --check extension/stream_v6.js
+          python -m py_compile helper/server.py helper/server_v2.py helper/server_v3.py helper/server_v4.py helper/server_v5.py helper/server_v6.py helper/server_v7.py helper/server_v8.py helper/server_v9.py helper/server_v10.py helper/server_v11.py
+          node --check extension/background_v11.js
+          node --check extension/content_v11.js
+          node --check extension/popup_v11.js
+          node --check extension/stream_v11.js
           node --check extension/recorder.js
           Get-Content extension/manifest.json -Raw | ConvertFrom-Json | Out-Null
+
+      - name: Run stabilization self tests
+        shell: pwsh
+        run: |
+          @'
+          import sys
+          sys.path.insert(0, 'helper')
+          import server_v11 as s
+          import server_v10 as v10
+
+          assert s.core.VERSION == '0.6.0'
+          assert s._quality_p(1920, 1080) == 1080
+          assert s._url_quality_hint('https://cdn.example/video_1280x720.mp4') == 720
+          payload = {
+              'media_url': 'https://video.example/master.m3u8',
+              'media_candidates': [
+                  {'url': 'https://video.example/master.m3u8', 'type': 'hls', 'score': 80},
+                  {'url': 'https://cdn.example/v1080.mp4', 'type': 'mp4', 'score': 60, 'contentLength': 10000000},
+              ],
+              'playback_width': 1920,
+              'playback_height': 1080,
+              'playback_duration': 120,
+          }
+          items = s._normalize_candidates(payload)
+          assert len(items) == 2
+          assert any(x['type'] == 'hls' for x in items)
+          playlist = '#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:5.5,\na.mp4\n#EXTINF:6.0,\nb.mp4\n#EXT-X-ENDLIST\n'
+          init, segments, duration = v10._parse_media_playlist_v10('https://video.example/720/index.m3u8', playlist)
+          assert init is None and len(segments) == 2
+          assert abs(duration - 11.5) < 0.001
+          print('OmniFetch 0.6.0 stabilization self-tests passed')
+          '@ | Set-Content -Encoding UTF8 selftest.py
+          python selftest.py
 
       - name: Build helper EXE
         shell: pwsh
         run: |
-          pyinstaller --noconfirm --clean --onefile --name OmniFetchHelper --collect-all yt_dlp --paths helper helper/server_v10.py
+          pyinstaller --noconfirm --clean --onefile --name OmniFetchHelper --collect-all yt_dlp --paths helper helper/server_v11.py
 
       - name: Stage FFmpeg
         shell: pwsh
@@ -61,7 +94,7 @@ jobs:
               try {
                 $health = Invoke-RestMethod -Uri "http://127.0.0.1:17891/health" -TimeoutSec 2
                 $caps = Invoke-RestMethod -Uri "http://127.0.0.1:17891/capabilities" -TimeoutSec 2
-                if ($health.ok -eq $true -and $health.ffmpeg -eq $true -and $health.version -eq '0.5.10' -and $caps.quality_probe -eq $true -and $caps.concurrent_fragments -eq 8) {
+                if ($health.ok -eq $true -and $health.ffmpeg -eq $true -and $health.version -eq '0.6.0' -and $caps.quality_probe -eq $true -and $caps.concurrent_fragments -eq 8) {
                   $ok = $true
                   break
                 }

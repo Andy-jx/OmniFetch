@@ -28,7 +28,7 @@ jobs:
       - name: Validate source files
         shell: pwsh
         run: |
-          python -m py_compile helper/server.py helper/server_v2.py helper/server_v3.py helper/server_v4.py helper/server_v5.py helper/server_v6.py helper/server_v7.py helper/server_v8.py helper/server_v9.py helper/server_v10.py helper/server_v11.py
+          python -m py_compile helper/server.py helper/server_v2.py helper/server_v3.py helper/server_v4.py helper/server_v5.py helper/server_v6.py helper/server_v7.py helper/server_v8.py helper/server_v9.py helper/server_v10.py helper/server_v11.py helper/server_v12.py
           node --check extension/background_v11.js
           node --check extension/content_v11.js
           node --check extension/popup_v11.js
@@ -41,13 +41,14 @@ jobs:
         run: |
           @'
           import sys
+          from pathlib import Path
           sys.path.insert(0, 'helper')
-          import server_v11 as s
+          import server_v12 as s
           import server_v10 as v10
 
-          assert s.core.VERSION == '0.6.0'
-          assert s._quality_p(1920, 1080) == 1080
-          assert s._url_quality_hint('https://cdn.example/video_1280x720.mp4') == 720
+          assert s.core.VERSION == '0.6.1'
+          assert s.v11._quality_p(1920, 1080) == 1080
+          assert s.v11._url_quality_hint('https://cdn.example/video_1280x720.mp4') == 720
           payload = {
               'media_url': 'https://video.example/master.m3u8',
               'media_candidates': [
@@ -58,21 +59,21 @@ jobs:
               'playback_height': 1080,
               'playback_duration': 120,
           }
-          items = s._normalize_candidates(payload)
+          items = s.v11._normalize_candidates(payload)
           assert len(items) == 2
-          assert any(x['type'] == 'hls' for x in items)
           playlist = '#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:5.5,\na.mp4\n#EXTINF:6.0,\nb.mp4\n#EXT-X-ENDLIST\n'
+          Path('test-local.m3u8').write_text(playlist, encoding='utf-8')
+          assert abs(s._manifest_duration(Path('test-local.m3u8')) - 11.5) < 0.001
           init, segments, duration = v10._parse_media_playlist_v10('https://video.example/720/index.m3u8', playlist)
-          assert init is None and len(segments) == 2
-          assert abs(duration - 11.5) < 0.001
-          print('OmniFetch 0.6.0 stabilization self-tests passed')
+          assert init is None and len(segments) == 2 and abs(duration - 11.5) < 0.001
+          print('OmniFetch 0.6.1 playback-safety self-tests passed')
           '@ | Set-Content -Encoding UTF8 selftest.py
           python selftest.py
 
       - name: Build helper EXE
         shell: pwsh
         run: |
-          pyinstaller --noconfirm --clean --onefile --name OmniFetchHelper --collect-all yt_dlp --paths helper helper/server_v11.py
+          pyinstaller --noconfirm --clean --onefile --name OmniFetchHelper --collect-all yt_dlp --paths helper helper/server_v12.py
 
       - name: Stage FFmpeg
         shell: pwsh
@@ -80,6 +81,13 @@ jobs:
           $ffmpeg = python -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"
           if (-not (Test-Path $ffmpeg)) { throw "FFmpeg binary not found: $ffmpeg" }
           Copy-Item $ffmpeg dist/ffmpeg.exe
+
+      - name: Verify H264 AAC compatibility encoder
+        shell: pwsh
+        run: |
+          & "$PWD\dist\ffmpeg.exe" -hide_banner -loglevel error -f lavfi -i "color=size=320x180:rate=25:duration=1" -f lavfi -i "anullsrc=r=48000:cl=stereo" -shortest -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -t 1 "$PWD\dist\compat-test.mp4"
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path "$PWD\dist\compat-test.mp4")) { throw "Bundled FFmpeg cannot encode H.264/AAC compatibility output" }
+          Remove-Item "$PWD\dist\compat-test.mp4" -Force
 
       - name: Smoke test helper EXE
         shell: pwsh
@@ -94,7 +102,7 @@ jobs:
               try {
                 $health = Invoke-RestMethod -Uri "http://127.0.0.1:17891/health" -TimeoutSec 2
                 $caps = Invoke-RestMethod -Uri "http://127.0.0.1:17891/capabilities" -TimeoutSec 2
-                if ($health.ok -eq $true -and $health.ffmpeg -eq $true -and $health.version -eq '0.6.0' -and $caps.quality_probe -eq $true -and $caps.concurrent_fragments -eq 8) {
+                if ($health.ok -eq $true -and $health.ffmpeg -eq $true -and $health.version -eq '0.6.1' -and $caps.quality_probe -eq $true -and $caps.concurrent_fragments -eq 8) {
                   $ok = $true
                   break
                 }

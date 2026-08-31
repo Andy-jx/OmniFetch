@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "OmniFetch 全平台下载助手",
-  "version": "0.6.1",
-  "description": "稳定版媒体下载助手：播放后同时保留多条真实媒体候选，按协议选择下载链路；M3U8 自动换源、直连视频自动探测最高画质，并在保存前校验文件大小、分辨率、时长和可播放性。",
+  "version": "0.6.2",
+  "description": "稳定版媒体下载助手：播放后同时保留多条真实媒体候选；HLS 下载后会剥离异常 PNG/垃圾包装、重建标准 H.264/AAC MP4，并严格校验时长与可播放性。",
   "permissions": [
     "activeTab",
     "downloads",

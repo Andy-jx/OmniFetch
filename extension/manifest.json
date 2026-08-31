@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "OmniFetch 全平台下载助手",
-  "version": "0.5.10",
-  "description": "网页媒体嗅探下载器：M3U8 原生分片下载后重建本地 HLS 时间线，并校验最终视频时长，修复文件大小正常但只能播放几秒的问题；继续优先最高画质并支持单独音频。",
+  "version": "0.6.0",
+  "description": "稳定版媒体下载助手：播放后同时保留多条真实媒体候选，按协议选择下载链路；M3U8 自动换源、直连视频自动探测最高画质，并在保存前校验文件大小、分辨率和视频时长。",
   "permissions": [
     "activeTab",
     "downloads",
@@ -15,7 +15,7 @@
     "<all_urls>"
   ],
   "background": {
-    "service_worker": "background_v6.js"
+    "service_worker": "background_v11.js"
   },
   "action": {
     "default_title": "OmniFetch",
@@ -24,7 +24,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "js": ["content_v11.js"],
       "run_at": "document_idle",
       "all_frames": true
     }
